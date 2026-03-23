@@ -1,0 +1,2155 @@
+import { useState } from "react";
+
+/* ─── TABELA DE PARCELAS ─────────────────────────────────────────────────── */
+// Fórmula: Fator = 1.45 + (n-3) * 0.15 | Parcela = (Valor * Fator) / n
+const calcParcela = (valor, n) => {
+  if (!valor || !n || n < 3 || n > 36) return 0;
+  const fator = 1.45 + (n - 3) * 0.15;
+  return parseFloat(((valor * fator) / n).toFixed(2));
+};
+const calcTotal = (valor, n) => {
+  if (!valor || !n) return 0;
+  return parseFloat((calcParcela(valor, n) * n).toFixed(2));
+};
+
+/* ─── MOCK DATA ──────────────────────────────────────────────────────────── */
+const CLIENTES = [
+  { id:1, nome:"Carlos Eduardo Mendes", cpf:"123.456.789-00", telefone:"(11) 99999-1111", rua:"Rua das Flores", numero:"123", bairro:"Jardins", cep:"01401-000", avalista:"Maria Mendes", observacoes:"Cliente desde 2022.", ativo:true, resp:"Admin", dt:"2022-03-10", completo:true },
+  { id:2, nome:"Ana Paula Silva",       cpf:"987.654.321-00", telefone:"(11) 98888-2222", rua:"Av. Brasil",     numero:"456", bairro:"Centro",  cep:"01310-100", avalista:"",           observacoes:"",                ativo:true, resp:"Admin", dt:"2023-01-15", completo:true },
+  { id:3, nome:"Roberto Costa Filho",  cpf:"456.789.123-00", telefone:"(11) 97777-3333", rua:"",              numero:"",   bairro:"Vila Nova",cep:"",          avalista:"Joana Costa", observacoes:"Referência ok.", ativo:true, incompleto:true,  resp:"Admin", dt:"2023-06-20" },
+  { id:4, nome:"Fernanda Lopes",        cpf:"321.654.987-00", telefone:"(11) 96666-4444", rua:"Rua Nova",       numero:"321", bairro:"Bela Vista",cep:"01308-000",avalista:"",          observacoes:"Difícil contato.",ativo:false,incompleto:false,resp:"Operador",dt:"2023-09-05" },
+];
+
+const EMPRESTIMOS = [
+  { id:1, clienteId:1, valor:5000, nParcelas:12, vParcela:calcParcela(5000,12), dtContrato:"2024-01-15", dtVencimento:"2024-02-15", vTotal:calcTotal(5000,12), status:"ativo",        resp:"Admin",    dt:"2024-01-15" },
+  { id:2, clienteId:2, valor:3000, nParcelas:6,  vParcela:calcParcela(3000,6),  dtContrato:"2024-03-01", dtVencimento:"2024-04-01", vTotal:calcTotal(3000,6),  status:"ativo",        resp:"Admin",    dt:"2024-03-01" },
+  { id:3, clienteId:3, valor:8000, nParcelas:24, vParcela:calcParcela(8000,24), dtContrato:"2023-06-10", dtVencimento:"2023-07-10", vTotal:calcTotal(8000,24), status:"inadimplente", resp:"Operador", dt:"2023-06-10" },
+  { id:4, clienteId:1, valor:2000, nParcelas:6,  vParcela:calcParcela(2000,6),  dtContrato:"2023-01-01", dtVencimento:"2023-02-01", vTotal:calcTotal(2000,6),  status:"quitado",      resp:"Admin",    dt:"2023-01-01" },
+];
+
+const gerarParcelas = (emp) => {
+  return Array.from({ length: emp.nParcelas }, (_, i) => {
+    const d = new Date(emp.dtVencimento + "T12:00:00");
+    d.setMonth(d.getMonth() + i);
+    return { id: emp.id * 1000 + i + 1, empId: emp.id, num: i + 1, valor: emp.vParcela, venc: d.toISOString().split("T")[0], status: i < 2 ? "paga" : i === 2 ? "atrasada" : "pendente", pago: i < 2 ? d.toISOString().split("T")[0] : null, comprovante: i < 2 ? { nome:"comprovante.pdf", tipo:"pdf", tamanho:"128KB" } : null };
+  });
+};
+
+const PARCELAS_INIT = EMPRESTIMOS.flatMap(e => gerarParcelas(e));
+
+/* ─── UTILS ──────────────────────────────────────────────────────────────── */
+const R  = v => new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"}).format(v);
+const DT = d => d ? new Date(d+"T12:00:00").toLocaleDateString("pt-BR") : "—";
+const AV = n => n.split(" ").slice(0,2).map(w=>w[0]).join("").toUpperCase();
+const MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+const HOJE = new Date().toISOString().split("T")[0];
+const Pct = v => `${v.toFixed(1)}%`;
+const maskCPF  = v => v.replace(/\D/g,"").slice(0,11).replace(/(\d{3})(\d)/,"$1.$2").replace(/(\d{3})(\d)/,"$1.$2").replace(/(\d{3})(\d{1,2})$/,"$1-$2");
+const maskCNPJ = v => v.replace(/\D/g,"").slice(0,14).replace(/(\d{2})(\d)/,"$1.$2").replace(/(\d{3})(\d)/,"$1.$2").replace(/(\d{3})(\d)/,"$1/$2").replace(/(\d{4})(\d{1,2})$/,"$1-$2");
+const maskFone = v => { const d=v.replace(/\D/g,"").slice(0,11); if(d.length<=10) return d.replace(/(\d{2})(\d{4})(\d{0,4})/,"($1) $2-$3"); return d.replace(/(\d{2})(\d{5})(\d{0,4})/,"($1) $2-$3"); };
+const maskCEP  = v => v.replace(/\D/g,"").slice(0,8).replace(/(\d{5})(\d{1,3})$/,"$1-$2");
+const maskDoc  = v => { const d=v.replace(/\D/g,""); return d.length<=11 ? maskCPF(d) : maskCNPJ(d); };
+const PCT = v => `${(v||0).toFixed(1)}%
+.rel-kpi{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px}
+@media(min-width:700px){.rel-kpi{grid-template-columns:repeat(4,1fr)}}
+
+.kpi{background:rgba(12,14,19,0.9);border:1px solid var(--gb2);border-radius:12px;padding:14px;position:relative;overflow:hidden}
+.kpi::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px}
+.kpi.gold::after{background:linear-gradient(90deg,var(--g),var(--g3))}.kpi.green::after{background:var(--gr)}.kpi.red::after{background:var(--rd)}.kpi.orange::after{background:var(--or)}
+.kpi-l{font-size:10px;color:var(--t3);margin-bottom:5px}.kpi-v{font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:700;line-height:1}.kpi-s{font-size:10px;color:var(--t3);margin-top:4px}
+
+.rel-section{background:rgba(12,14,19,0.9);border:1px solid var(--gb2);border-radius:14px;overflow:hidden;margin-bottom:14px}
+.rel-section-head{padding:14px 18px;border-bottom:1px solid var(--gb2);display:flex;align-items:center;justify-content:space-between;background:rgba(17,21,32,0.5)}
+.rel-section-title{font-size:9px;color:var(--g);letter-spacing:2px;text-transform:uppercase;font-weight:700}
+.rel-row{display:flex;justify-content:space-between;align-items:center;padding:10px 18px;border-bottom:1px solid rgba(255,255,255,.03)}.rel-row:last-child{border-bottom:none}.rel-row:hover{background:rgba(200,168,74,.03)}
+
+.pf{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
+.pf-btn{padding:5px 13px;border-radius:20px;font-size:11px;font-weight:500;cursor:pointer;border:1px solid var(--gb2);background:transparent;color:var(--t3);transition:all .15s;-webkit-tap-highlight-color:transparent}.pf-btn.on{background:var(--gd);color:var(--g2);border-color:var(--gb)}
+
+.lembrete-card{background:rgba(212,135,74,.06);border:1px solid var(--orb);border-radius:12px;padding:14px 16px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+
+@keyframes bioScan{0%,100%{box-shadow:0 0 0 0 rgba(200,168,74,.4)}50%{box-shadow:0 0 0 12px rgba(200,168,74,0),0 0 32px rgba(200,168,74,0.5)}}
+`;
+
+// Máscaras
+
+// Formatação monetária em tempo real
+const parseInput = f => { if(!f) return 0; return parseFloat(f.replace(/\./g,"").replace(",","."))||0; };
+const fmtMoney = raw => { const d=raw.replace(/\D/g,""); if(!d) return ""; const n=parseInt(d,10)/100; return new Intl.NumberFormat("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2}).format(n); };
+const useMoney = (ini="") => { const [disp,setDisp] = useState(ini); const onChange = e => { const d=e.target.value.replace(/\D/g,""); if(!d){setDisp("");return;} setDisp(fmtMoney(d)); }; return [disp, onChange, parseInput(disp)]; };
+
+/* ─── ICONS ──────────────────────────────────────────────────────────────── */
+const Ic = ({n,s=18}) => {
+  const p = {width:s,height:s,viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:"1.8",strokeLinecap:"round",strokeLinejoin:"round"};
+  const m = {
+    home:    <svg {...p}><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>,
+    users:   <svg {...p}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+    money:   <svg {...p}><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>,
+    cal:     <svg {...p}><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
+    track:  <svg {...p}><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>,
+    trend:  <svg {...p}><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>,
+    bell:   <svg {...p}><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>,
+    edit:   <svg {...p}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
+    download:<svg {...p}><polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/></svg>,
+    share:  <svg {...p}><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>,
+    finger: <svg {...p}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>,
+    info:   <svg {...p}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>,
+    wallet:  <svg {...p}><path d="M20 7H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/><path d="M16 3H8L4 7h16z"/><circle cx="17" cy="14" r="1" fill="currentColor"/></svg>,
+    chart:   <svg {...p}><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
+    gear:    <svg {...p}><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>,
+    calc:    <svg {...p}><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="16" y2="10"/><line x1="8" y1="14" x2="12" y2="14"/><line x1="8" y1="18" x2="12" y2="18"/></svg>,
+    plus:    <svg {...p}><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
+    check:   <svg {...p}><polyline points="20 6 9 17 4 12"/></svg>,
+    back:    <svg {...p}><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>,
+    eye:     <svg {...p}><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>,
+    exit:    <svg {...p}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>,
+    search:  <svg {...p}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
+    up:      <svg {...p}><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>,
+    down:    <svg {...p}><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg>,
+    warn:    <svg {...p}><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
+    send:    <svg {...p}><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>,
+    upload:  <svg {...p}><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>,
+    lock:    <svg {...p}><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>,
+    user:    <svg {...p}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
+    shield:  <svg {...p}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>,
+    finger:  <svg {...p}><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm0-14a6 6 0 0 0-6 6h2a4 4 0 0 1 4-4zm0 3a3 3 0 0 0-3 3h2a1 1 0 0 1 1-1z"/></svg>,
+    edit:    <svg {...p}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
+    pdf:     <svg {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="15" x2="15" y2="15"/></svg>,
+    dl:      <svg {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
+    info:    <svg {...p}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>,
+    wa:      <svg {...p}><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>,
+    mail:    <svg {...p}><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>,
+    chevL:   <svg {...p}><polyline points="15 18 9 12 15 6"/></svg>,
+    chevR:   <svg {...p}><polyline points="9 18 15 12 9 6"/></svg>,
+    prev:    <svg {...p}><polyline points="11 17 6 12 11 7"/><polyline points="18 17 13 12 18 7"/></svg>,
+    next:    <svg {...p}><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg>,
+    pdf:     <svg {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="15" x2="15" y2="15"/></svg>,
+    dl:      <svg {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
+  };
+  return m[n]||null;
+};
+
+/* ─── LOGO COMPONENT ─────────────────────────────────────────────────────── */
+const Logo = ({size=44}) => (
+  <div style={{width:size,height:size,borderRadius:"50%",position:"relative",flexShrink:0,
+    background:"radial-gradient(ellipse at 30% 25%,rgba(255,255,255,0.22) 0%,transparent 50%),linear-gradient(145deg,rgba(255,255,255,0.1) 0%,rgba(200,168,74,0.05) 100%)",
+    border:"1px solid rgba(255,255,255,0.18)",
+    boxShadow:"inset 0 2px 8px rgba(255,255,255,0.15),inset 0 -2px 8px rgba(0,0,0,0.3),0 8px 32px rgba(200,168,74,0.2),0 4px 16px rgba(0,0,0,0.5)",
+    display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",
+    backdropFilter:"blur(24px)"}}>
+    <div style={{position:"absolute",top:"6%",left:"8%",width:"55%",height:"42%",
+      background:"linear-gradient(145deg,rgba(255,255,255,0.35) 0%,rgba(255,255,255,0.05) 60%,transparent 100%)",
+      borderRadius:"50%",filter:"blur(4px)",transform:"rotate(-15deg)"}}/>
+    <svg width={size*0.52} height={size*0.52} viewBox="0 0 40 40" style={{position:"relative",zIndex:2,filter:"drop-shadow(0 0 8px rgba(200,168,74,0.9)) drop-shadow(0 2px 4px rgba(0,0,0,0.8))"}}>
+      <defs>
+        <linearGradient id="xg" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#ffffff"/>
+          <stop offset="30%" stopColor="#f8e8a0"/>
+          <stop offset="60%" stopColor="#dbb85a"/>
+          <stop offset="100%" stopColor="#ffffff"/>
+        </linearGradient>
+      </defs>
+      <line x1="5" y1="5" x2="35" y2="35" stroke="url(#xg)" strokeWidth="7.5" strokeLinecap="round"/>
+      <line x1="35" y1="5" x2="5" y2="35" stroke="url(#xg)" strokeWidth="7.5" strokeLinecap="round"/>
+    </svg>
+  </div>
+);
+
+/* ─── CSS ────────────────────────────────────────────────────────────────── */
+const CSS = `
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Outfit:wght@300;400;500;600&family=Cinzel:wght@400;600;900&display=swap');
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --k:#07080a; --k1:#0c0e13; --k2:#111520; --k3:#171c28; --k4:#1c2130;
+  --g:#c8a84a; --g2:#dbb85a; --g3:#eece72; --g4:#f8e49a;
+  --gd:rgba(200,168,74,.15); --gd2:rgba(200,168,74,.07); --gd3:rgba(200,168,74,.04);
+  --gb:rgba(200,168,74,.22); --gb2:rgba(200,168,74,.1); --gb3:rgba(200,168,74,.06);
+  --t:#ede5cf; --t2:#9a8e78; --t3:#504638;
+  --gr:#48b080; --grd:rgba(72,176,128,.12); --grb:rgba(72,176,128,.22);
+  --rd:#c05050; --rdd:rgba(192,80,80,.12); --rdb:rgba(192,80,80,.22);
+  --glass-bg:linear-gradient(135deg,rgba(255,255,255,0.1) 0%,rgba(255,255,255,0.02) 50%,rgba(200,168,74,0.06) 100%);
+  --glass-border:rgba(255,255,255,0.14);
+  --glass-shine:inset 0 1px 0 rgba(255,255,255,0.2),inset 0 -1px 0 rgba(0,0,0,0.15);
+}
+html,body,#root{height:100%;background:#07080a !important}
+*{color-scheme:dark}
+input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus,input:-webkit-autofill:active{-webkit-box-shadow:0 0 0 1000px #111520 inset !important;-webkit-text-fill-color:#ede5cf !important;caret-color:#ede5cf}
+body{background:#07080a !important;background-color:#07080a !important;color:var(--t);font-family:'Outfit',sans-serif;font-size:14px;-webkit-font-smoothing:antialiased}
+input,select,textarea,button{font-family:'Outfit',sans-serif}
+::-webkit-scrollbar{width:3px;height:3px}
+::-webkit-scrollbar-track{background:var(--k1)}
+::-webkit-scrollbar-thumb{background:var(--k4);border-radius:3px}
+
+/* ── LAYOUT ── */
+.layout{display:flex;min-height:100vh}
+
+/* ── SIDEBAR DESKTOP ── */
+.sidebar{width:260px;min-height:100vh;background:rgba(12,14,19,0.95);border-right:1px solid var(--gb2);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;overflow-y:auto;flex-shrink:0;backdrop-filter:blur(20px)}
+.sb-logo{padding:22px 20px 18px;border-bottom:1px solid var(--gb2);display:flex;align-items:center;gap:12px;position:relative}
+.sb-logo::after{content:'';position:absolute;bottom:-1px;left:15%;right:15%;height:1px;background:linear-gradient(90deg,transparent,var(--g),transparent)}
+.sb-texts{flex:1}
+.sb-brand{font-family:'Cinzel',serif;font-size:18px;font-weight:600;letter-spacing:3px;background:linear-gradient(135deg,var(--g2),var(--g3));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.sb-tagline{font-size:9px;color:var(--t3);letter-spacing:2px;text-transform:uppercase;margin-top:1px}
+.sb-nav{padding:12px 10px;flex:1}
+.sb-sec{font-size:9px;color:var(--t3);letter-spacing:2.5px;text-transform:uppercase;padding:12px 12px 4px;font-weight:600}
+.ni{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;cursor:pointer;color:var(--t2);font-size:13px;transition:all .15s;margin-bottom:2px;position:relative;user-select:none}
+.ni:hover{color:var(--t);background:var(--gd2)}
+.ni.on{color:var(--g2);background:var(--gd);font-weight:500}
+.ni.on::before{content:'';position:absolute;left:0;top:20%;bottom:20%;width:2.5px;background:linear-gradient(180deg,var(--g),var(--g3));border-radius:0 2px 2px 0}
+.ni svg{flex-shrink:0;opacity:.6;transition:opacity .15s}
+.ni:hover svg,.ni.on svg{opacity:1}
+.nb{margin-left:auto;background:var(--rd);color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px}
+.sb-foot{padding:12px 10px;border-top:1px solid var(--gb2)}
+.sb-user{display:flex;align-items:center;gap:9px;padding:10px 12px;border-radius:10px;background:var(--gd2);border:1px solid var(--gb2)}
+.sbu-name{font-size:12px;font-weight:500;color:var(--t)}
+.sbu-role{font-size:10px;color:var(--g)}
+.sb-exit{width:26px;height:26px;background:none;border:none;cursor:pointer;color:var(--t3);display:flex;align-items:center;justify-content:center;border-radius:6px;transition:all .15s;margin-left:auto}
+.sb-exit:hover{color:var(--rd);background:var(--rdd)}
+
+/* ── MAIN ── */
+.main{flex:1;overflow-y:auto;background:#07080a !important;min-width:0}
+
+/* ── MOBILE HEADER ── */
+.mob-header{display:none;position:sticky;top:0;z-index:100;background:rgba(12,14,19,0.97);border-bottom:1px solid var(--gb2);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);padding:10px 18px;padding-top:calc(10px + env(safe-area-inset-top));flex-direction:row;align-items:center;justify-content:space-between}
+.mob-logo{display:flex;align-items:center;gap:10px}
+.mob-brand{font-family:'Cinzel',serif;font-size:17px;font-weight:600;letter-spacing:3px;background:linear-gradient(135deg,var(--g2),var(--g3));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+
+/* ── BOTTOM NAV ── */
+.bottomnav{display:none;position:fixed;bottom:0;left:0;right:0;z-index:200;background:rgba(12,14,19,0.97);border-top:1px solid var(--gb2);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);padding:6px 2px;padding-bottom:calc(6px + env(safe-area-inset-bottom))}
+.bn-items{display:flex;align-items:flex-start;justify-content:space-around}
+.bn-item{display:flex;flex-direction:column;align-items:center;gap:2px;padding:5px 8px;border-radius:10px;cursor:pointer;color:var(--t3);transition:all .15s;position:relative;min-width:44px;user-select:none;-webkit-tap-highlight-color:transparent}
+.bn-item.on{color:var(--g2)}
+.bn-dot{width:3px;height:3px;border-radius:50%;background:transparent;transition:background .15s;margin-top:1px}
+.bn-item.on .bn-dot{background:var(--g)}
+.bn-label{font-size:9px;font-weight:500;letter-spacing:.2px;white-space:nowrap}
+.bn-badge{position:absolute;top:2px;right:4px;background:var(--rd);color:#fff;font-size:8px;font-weight:700;padding:1px 4px;border-radius:6px}
+
+@media(max-width:768px){
+  .sidebar{display:none}
+  .mob-header{display:flex}
+  .bottomnav{display:block}
+  .main{padding-bottom:76px}
+  .layout{display:block;background:#07080a}
+}
+
+/* ── PAGE ── */
+.pg{padding:24px 28px 48px;background:#07080a;min-height:100%}
+@media(max-width:768px){.pg{padding:14px 16px 32px}}
+.phead{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:20px;flex-wrap:wrap}
+.pey{font-size:9px;color:var(--g);letter-spacing:2.5px;text-transform:uppercase;margin-bottom:3px;font-weight:600}
+.ptt{font-family:'Cormorant Garamond',serif;font-size:26px;font-weight:600;letter-spacing:.3px;line-height:1}
+.psb{font-size:11.5px;color:var(--t3);margin-top:3px}
+.back-btn{display:inline-flex;align-items:center;gap:5px;color:var(--t3);cursor:pointer;font-size:11px;padding:4px 0;transition:color .15s;letter-spacing:.5px;text-transform:uppercase;font-weight:500;margin-bottom:8px;-webkit-tap-highlight-color:transparent}
+.back-btn:hover{color:var(--g)}
+
+/* ── GLASS CARD ── */
+.glass{background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:14px;box-shadow:var(--glass-shine),0 4px 24px rgba(0,0,0,0.3);backdrop-filter:blur(12px);position:relative;overflow:hidden}
+.glass::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.2),transparent)}
+.card{background:rgba(12,14,19,0.8);border:1px solid var(--gb2);border-radius:14px;padding:18px;position:relative;overflow:hidden;backdrop-filter:blur(8px)}
+.card::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(200,168,74,0.25),transparent)}
+.ct{font-size:9px;color:var(--g);letter-spacing:2px;text-transform:uppercase;font-weight:600;margin-bottom:10px}
+
+/* ── STAT CARDS ── */
+.stats{display:grid;grid-template-columns:repeat(2,1fr);gap:11px;margin-bottom:18px}
+@media(min-width:900px){.stats{grid-template-columns:repeat(4,1fr)}}
+.sc{background:rgba(12,14,19,0.8);border:1px solid var(--gb2);border-radius:14px;padding:16px;position:relative;overflow:hidden;backdrop-filter:blur(8px)}
+.sc::after{content:'';position:absolute;top:0;left:0;width:3px;height:100%}
+.scg::after{background:linear-gradient(180deg,var(--g),var(--g3))}
+.scgr::after{background:var(--gr)}
+.scr::after{background:var(--rd)}
+.scd::after{background:var(--k4)}
+.scb::after{background:#5b8dee}
+.si{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;margin-bottom:10px}
+.sig{background:var(--gd);color:var(--g2)} .sigr{background:var(--grd);color:var(--gr)} .sir{background:var(--rdd);color:var(--rd)} .sid{background:rgba(255,255,255,.04);color:var(--t3)} .sib{background:rgba(91,141,238,.12);color:#5b8dee}
+.sl{font-size:11px;color:var(--t3);margin-bottom:4px}
+.sv{font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:600;line-height:1.1}
+.svg_{color:var(--g2)} .svgr{color:var(--gr)} .svr{color:var(--rd)} .svd{color:var(--t2)} .svb{color:#5b8dee}
+.sf_{font-size:10px;color:var(--t3);margin-top:5px}
+@media(max-width:360px){.sv{font-size:18px}}
+
+/* ── BUTTONS ── */
+.btn{display:inline-flex;align-items:center;gap:7px;padding:9px 18px;border-radius:10px;font-family:'Outfit',sans-serif;font-size:13px;font-weight:500;cursor:pointer;border:none;transition:all .18s;white-space:nowrap;-webkit-tap-highlight-color:transparent}
+.bg{background:linear-gradient(135deg,var(--g),var(--g2));color:var(--k);font-weight:600;box-shadow:0 2px 12px rgba(200,168,74,.2)}
+.bg:hover,.bg:active{transform:translateY(-1px);box-shadow:0 4px 18px rgba(200,168,74,.35)}
+.bo{background:transparent;color:var(--g);border:1px solid var(--gb)}
+.bo:hover{background:var(--gd);border-color:var(--g)}
+.bgh{background:rgba(255,255,255,.04);color:var(--t2);border:1px solid rgba(255,255,255,.08)}
+.bgh:hover{color:var(--t);background:rgba(255,255,255,.07)}
+.bgr{background:var(--grd);color:var(--gr);border:1px solid var(--grb)}
+.brd{background:var(--rdd);color:var(--rd);border:1px solid var(--rdb)}
+.bsm{padding:5px 11px;font-size:11.5px}
+.bfw{width:100%;justify-content:center;padding:13px}
+.btn-pago{background:rgba(72,176,128,.15);color:var(--gr);border:1.5px solid rgba(72,176,128,.35);font-weight:600}
+.btn-aberto{background:rgba(192,80,80,.15);color:var(--rd);border:1.5px solid rgba(192,80,80,.35);font-weight:600}
+
+/* ── FIELDS ── */
+.fld{margin-bottom:13px}
+.fld label{display:block;font-size:9px;font-weight:600;color:var(--g);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:5px}
+.fld input,.fld select,.fld textarea{width:100%;background:rgba(17,21,32,0.9) !important;border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:10px 13px;color:var(--t) !important;font-family:'Outfit',sans-serif;font-size:14px;outline:none;transition:border-color .18s;-webkit-appearance:none;backdrop-filter:blur(4px);color-scheme:dark}
+.fld input:focus,.fld select:focus,.fld textarea:focus{border-color:var(--gb)}
+.fld input[readonly]{background:rgba(7,8,10,0.8);color:var(--g2);font-weight:600;border-color:var(--gb3)}
+.fld select option{background:#111520 !important;color:var(--t) !important}
+.fld textarea{resize:vertical;min-height:72px;line-height:1.5}
+.fld .hint{font-size:11px;color:var(--t3);margin-top:3px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+@media(max-width:480px){.g2{grid-template-columns:1fr}.g3{grid-template-columns:1fr 1fr}}
+
+/* ── TABLE / LIST ── */
+.tw{background:rgba(12,14,19,0.8);border:1px solid var(--gb2);border-radius:14px;overflow:hidden;margin-bottom:16px;backdrop-filter:blur(8px);color-scheme:dark}
+.tht{padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:10px;border-bottom:1px solid var(--gb2);flex-wrap:wrap;gap:8px}
+.tl{font-family:'Cormorant Garamond',serif;font-size:16px;font-weight:600;color:var(--t)}
+.dtable{width:100%;border-collapse:collapse;background:transparent}
+thead tr{background:rgba(17,21,32,0.95) !important}
+th{padding:9px 15px;text-align:left;font-size:9px;font-weight:600;color:var(--g);text-transform:uppercase;letter-spacing:1.2px;border-bottom:1px solid var(--gb2);white-space:nowrap}
+td{padding:12px 15px;border-bottom:1px solid rgba(255,255,255,.025);font-size:13px;color:var(--t);vertical-align:middle;background:transparent}
+tr:last-child td{border-bottom:none}
+tbody tr{background:transparent} tbody tr:hover td{background:rgba(200,168,74,.04)}
+@media(max-width:768px){.dtable{display:none}}
+.mlist{display:none}
+@media(max-width:768px){.mlist{display:block}}
+.mitem{padding:13px 16px;border-bottom:1px solid rgba(255,255,255,.03);cursor:pointer;transition:background .12s;-webkit-tap-highlight-color:transparent}
+.mitem:last-child{border-bottom:none}
+.mitem:active{background:rgba(200,168,74,.04)}
+.mitem-row{display:flex;align-items:center;gap:11px}
+.mav{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-family:'Cinzel',serif;font-size:13px;font-weight:700;flex-shrink:0}
+.mav.gold{background:var(--gd);color:var(--g2)}
+.mav.red{background:var(--rdd);color:var(--rd)}
+.mav.green{background:var(--grd);color:var(--gr)}
+.mbody{flex:1;min-width:0}
+.mname{font-size:13px;font-weight:500;color:var(--t);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.msub{font-size:11px;color:var(--t3);margin-top:2px}
+.mright{text-align:right;flex-shrink:0}
+.mval{font-size:14px;font-weight:600;font-family:'Cormorant Garamond',serif}
+
+/* ── BADGE ── */
+.bd{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:20px;font-size:10px;font-weight:600;white-space:nowrap}
+.bd::before{content:'●';font-size:6px}
+.bd.ativo,.bd.paga{background:var(--grd);color:var(--gr);border:1px solid var(--grb)}
+.bd.inadimplente,.bd.atrasada{background:var(--rdd);color:var(--rd);border:1px solid var(--rdb)}
+.bd.pendente{background:rgba(200,168,74,.1);color:var(--g2);border:1px solid var(--gb2)}
+.bd.quitado,.bd.inativo{background:rgba(255,255,255,.04);color:var(--t3);border:1px solid rgba(255,255,255,.07)}
+
+/* ── SEARCH ── */
+.srch{position:relative}
+.srch input{padding:8px 12px 8px 34px;width:200px;background:rgba(17,21,32,0.9);border:1px solid rgba(255,255,255,.1);border-radius:9px;color:var(--t);font-size:12.5px;outline:none;transition:border-color .18s}
+.srch input:focus{border-color:var(--gb)}
+.srch svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--t3);pointer-events:none}
+@media(max-width:480px){.srch input{width:150px}}
+
+/* ── MODAL ── */
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:300;display:flex;align-items:flex-end;justify-content:center;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:0}
+@media(min-width:600px){.ov{align-items:center;padding:20px}}
+.modal{background:linear-gradient(145deg,rgba(17,21,32,0.97) 0%,rgba(12,14,19,0.99) 100%);border:1px solid var(--gb);border-radius:20px 20px 0 0;padding:26px 22px;width:100%;max-height:92vh;overflow-y:auto;position:relative;box-shadow:0 -8px 48px rgba(200,168,74,.1),0 -2px 0 rgba(200,168,74,.15);backdrop-filter:blur(20px)}
+@media(min-width:600px){.modal{border-radius:18px;width:540px;max-width:95vw;max-height:86vh;box-shadow:0 24px 64px rgba(0,0,0,.7),0 0 0 1px rgba(200,168,74,.1)}}
+.modal::before{content:'';position:absolute;top:0;left:15%;right:15%;height:1px;background:linear-gradient(90deg,transparent,var(--g),transparent)}
+.modal-handle{width:36px;height:3px;background:var(--k4);border-radius:2px;margin:0 auto 18px}
+@media(min-width:600px){.modal-handle{display:none}}
+.mtt{font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:600;color:var(--t);margin-bottom:3px}
+.mst{font-size:12px;color:var(--t3);margin-bottom:20px}
+.mf{display:flex;gap:9px;justify-content:flex-end;margin-top:20px;padding-top:16px;border-top:1px solid var(--gb2)}
+
+/* ── DETAIL ── */
+.dg{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px}
+@media(max-width:600px){.dg{grid-template-columns:1fr}}
+.ir{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+.ir:last-child{border-bottom:none}
+.ik{font-size:11px;color:var(--t3);font-weight:500;flex-shrink:0}
+.iv{font-size:13px;color:var(--t);font-weight:500;text-align:right}
+
+/* ── PROGRESS ── */
+.pgb{height:4px;background:var(--k4);border-radius:3px;overflow:hidden;margin-top:6px}
+.pgf{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--g),var(--g3));transition:width .5s}
+.pgf.gr{background:var(--gr)}
+
+/* ── TABS ── */
+.tabs{display:flex;gap:2px;background:rgba(12,14,19,0.8);border:1px solid var(--gb2);border-radius:10px;padding:3px;margin-bottom:16px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;backdrop-filter:blur(8px)}
+.tabs::-webkit-scrollbar{display:none}
+.tab{padding:7px 14px;border-radius:8px;font-size:12px;font-weight:500;cursor:pointer;color:var(--t3);transition:all .15s;white-space:nowrap;-webkit-tap-highlight-color:transparent}
+.tab.on{background:var(--gd);color:var(--g2)}
+.tc{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:var(--rd);color:#fff;font-size:8px;font-weight:700;border-radius:50%;margin-left:4px}
+
+/* ── TOAST ── */
+.toast{position:fixed;bottom:calc(82px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);background:rgba(17,21,32,0.95);border:1px solid var(--gb);border-radius:12px;padding:11px 18px;font-size:12.5px;color:var(--g2);z-index:999;box-shadow:0 8px 32px rgba(0,0,0,.6);animation:tin .25s ease;display:flex;align-items:center;gap:8px;max-width:320px;width:calc(100% - 32px);backdrop-filter:blur(16px)}
+@media(min-width:769px){.toast{bottom:24px;width:auto}}
+.ti{width:20px;height:20px;border-radius:50%;background:var(--gd);display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--g)}
+@keyframes tin{from{opacity:0;transform:translateX(-50%) translateY(10px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+
+/* ── MISC ── */
+.gdl{height:1px;background:linear-gradient(90deg,transparent,var(--gb2),transparent);margin:14px 0}
+.empty{text-align:center;padding:44px 20px}
+.et{font-family:'Cormorant Garamond',serif;font-size:16px;color:var(--t2);margin-bottom:4px}
+.es{font-size:11.5px;color:var(--t3)}
+.mini-chart{display:flex;align-items:flex-end;gap:4px;height:56px}
+.bar_{flex:1;border-radius:3px 3px 0 0;min-height:4px;transition:opacity .2s}
+.bar-lbl{flex:1;text-align:center;font-size:9px;color:var(--t3);margin-top:5px}
+.alert-banner{background:rgba(200,168,74,.08);border:1px solid var(--gb2);border-radius:10px;padding:11px 14px;display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.alert-banner.red{background:var(--rdd);border-color:var(--rdb)}
+.alert-text{font-size:12px;color:var(--t2);flex:1}
+.comp-preview{background:#07080a;border:1px solid var(--gb2);border-radius:12px;padding:20px;text-align:center}
+.bio-btn{display:flex;flex-direction:column;align-items:center;gap:6px;width:100%;background:rgba(200,168,74,.06);border:1px solid var(--gb2);border-radius:12px;padding:14px;cursor:pointer;color:var(--t2);transition:all .18s;margin-top:10px}
+.bio-btn:hover{background:var(--gd);color:var(--g2);border-color:var(--gb)}
+.bio-label{font-size:11px;letter-spacing:1px}
+.uzn{border:1.5px dashed var(--gb);border-radius:12px;padding:24px;text-align:center;cursor:pointer;background:var(--gd2);transition:all .18s;-webkit-tap-highlight-color:transparent}
+.uzn:hover,.uzn:active{border-color:var(--g);background:var(--gd)}
+
+/* ── MONTH NAV ── */
+.month-nav{display:flex;align-items:center;justify-content:space-between;background:rgba(12,14,19,0.8);border:1px solid var(--gb2);border-radius:12px;padding:10px 14px;margin-bottom:14px;backdrop-filter:blur(8px)}
+.month-title{font-family:'Cormorant Garamond',serif;font-size:17px;font-weight:600;color:var(--t);text-align:center;flex:1}
+.month-sub{font-size:10px;color:var(--t3);text-align:center;margin-top:1px}
+.month-btn{width:32px;height:32px;border-radius:8px;background:var(--gd2);border:1px solid var(--gb2);color:var(--g);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s;flex-shrink:0}
+.month-btn:hover{background:var(--gd);border-color:var(--gb)}
+
+/* ── DAY FILTER ── */
+.day-filter{background:rgba(12,14,19,0.8);border:1px solid var(--gb2);border-radius:12px;padding:14px 16px;margin-bottom:14px;backdrop-filter:blur(8px)}
+.day-filter-title{font-size:9px;color:var(--g);letter-spacing:2px;text-transform:uppercase;font-weight:600;margin-bottom:10px}
+.day-inputs{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.day-inputs input{width:80px;background:rgba(17,21,32,0.9);border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:8px 10px;color:var(--t);font-size:13px;outline:none;text-align:center;transition:border-color .18s}
+.day-inputs input:focus{border-color:var(--gb)}
+.day-sep{color:var(--t3);font-size:12px}
+
+/* ── RELATORIO PREVIEW ── */
+.rel-preview{background:rgba(7,8,10,0.95);border:1px solid var(--gb);border-radius:14px;padding:24px;font-family:'Outfit',sans-serif;max-height:70vh;overflow-y:auto}
+.rel-header{text-align:center;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--gb2)}
+.rel-logo-row{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:8px}
+.rel-title{font-family:'Cinzel',serif;font-size:14px;letter-spacing:3px;color:var(--g2)}
+.rel-client{font-size:13px;color:var(--t);font-weight:600;margin-bottom:2px}
+.rel-date{font-size:11px;color:var(--t3)}
+.rel-section{margin-bottom:16px}
+.rel-section-title{font-size:9px;color:var(--g);letter-spacing:2px;text-transform:uppercase;font-weight:600;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--gb2)}
+.rel-row{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.03)}
+.rel-row:last-child{border-bottom:none}
+.rel-row-num{font-size:11px;color:var(--t3);width:30px}
+.rel-row-val{font-size:13px;font-weight:600}
+.rel-row-date{font-size:11px;color:var(--t2)}
+.rel-row-status{font-size:10px;font-weight:600}
+
+/* ── ORCAMENTO ── */
+.orc-table{width:100%;border-collapse:collapse;margin-top:16px}
+.orc-table th{background:rgba(200,168,74,.1);padding:10px 16px;text-align:left;font-size:9px;font-weight:600;color:var(--g);text-transform:uppercase;letter-spacing:1.2px;border-bottom:1px solid var(--gb)}
+.orc-table td{padding:11px 16px;border-bottom:1px solid rgba(255,255,255,.03);font-size:14px;color:var(--t);vertical-align:middle}
+.orc-table tr:last-child td{border-bottom:none}
+.orc-table tbody tr:hover td{background:rgba(200,168,74,.03)}
+.orc-table .parcela-num{font-weight:700;color:var(--g2);font-family:'Cormorant Garamond',serif;font-size:16px}
+.orc-table .parcela-val{font-weight:600;color:var(--t);font-family:'Cormorant Garamond',serif;font-size:16px}
+
+/* ── NOVOS ── */
+.incbar{background:var(--ord,#d4874a);color:#07080a;font-size:11px;font-weight:600;padding:7px 14px;border-radius:8px;margin-bottom:14px;display:flex;align-items:center;gap:7px}
+:root{--or:#d4874a;--ord:rgba(212,135,74,.15);--orb:rgba(212,135,74,.25)}
+.sc.scor::after{background:var(--or)}.si.sior{background:var(--ord);color:var(--or)}.sv.svor{color:var(--or)}
+.opt-row{display:flex;align-items:center;gap:8px;padding:8px 0;cursor:pointer}.opt-row input[type=checkbox]{width:16px;height:16px;accent-color:var(--g);cursor:pointer;flex-shrink:0}.opt-row span{font-size:12px;color:var(--t2)}
+.rel-kpi{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px}@media(min-width:700px){.rel-kpi{grid-template-columns:repeat(4,1fr)}}
+.kpi{background:rgba(12,14,19,0.9);border:1px solid var(--gb2);border-radius:12px;padding:14px;position:relative;overflow:hidden}
+.kpi::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px}
+.kpi.gold::after{background:linear-gradient(90deg,var(--g),var(--g3))}.kpi.green::after{background:var(--gr)}.kpi.red::after{background:var(--rd)}.kpi.orange::after{background:var(--or)}
+.kpi-l{font-size:10px;color:var(--t3);margin-bottom:5px}.kpi-v{font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:700;line-height:1}.kpi-s{font-size:10px;color:var(--t3);margin-top:4px}
+.rel-section{background:rgba(12,14,19,0.9);border:1px solid var(--gb2);border-radius:14px;overflow:hidden;margin-bottom:14px}
+.rel-section-head{padding:14px 18px;border-bottom:1px solid var(--gb2);display:flex;align-items:center;justify-content:space-between;background:rgba(17,21,32,0.5)}
+.rel-section-title{font-size:9px;color:var(--g);letter-spacing:2px;text-transform:uppercase;font-weight:700}
+.rel-row{display:flex;justify-content:space-between;align-items:center;padding:10px 18px;border-bottom:1px solid rgba(255,255,255,.03)}.rel-row:last-child{border-bottom:none}.rel-row:hover{background:rgba(200,168,74,.03)}
+.pf{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
+.pf-btn{padding:5px 13px;border-radius:20px;font-size:11px;font-weight:500;cursor:pointer;border:1px solid var(--gb2);background:transparent;color:var(--t3);transition:all .15s;-webkit-tap-highlight-color:transparent}.pf-btn.on{background:var(--gd);color:var(--g2);border-color:var(--gb)}
+.lembrete-card{background:rgba(212,135,74,.06);border:1px solid var(--orb);border-radius:12px;padding:14px 16px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.bio-btn{width:72px;height:72px;border-radius:50%;background:var(--gd);border:2px solid var(--gb);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .2s;color:var(--g2);margin:0 auto}
+.bio-btn:hover{transform:scale(1.05);box-shadow:0 0 24px rgba(200,168,74,.3)}.bio-btn.scanning{animation:pulse 1s ease-in-out infinite}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(200,168,74,.4)}50%{box-shadow:0 0 0 12px rgba(200,168,74,0)}}
+.ldiv{display:flex;align-items:center;gap:10px;margin:18px 0}.ldiv-line{flex:1;height:1px;background:var(--gb2)}.ldiv-txt{font-size:10px;color:var(--t3);letter-spacing:1px}
+.bwa{background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;font-weight:600}
+/* ── LOGIN ── */
+.login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--k);padding:20px;padding-top:max(20px,env(safe-area-inset-top))}
+.login-box{width:100%;max-width:380px;background:linear-gradient(145deg,rgba(17,21,32,0.95) 0%,rgba(12,14,19,0.98) 100%);border:1px solid var(--gb);border-radius:22px;padding:36px 28px;position:relative;overflow:hidden;backdrop-filter:blur(20px);box-shadow:0 24px 64px rgba(0,0,0,.7),0 0 0 1px rgba(200,168,74,.08)}
+.login-box::before{content:'';position:absolute;top:0;left:10%;right:10%;height:1px;background:linear-gradient(90deg,transparent,var(--g),transparent)}
+.lbrand{font-family:'Cinzel',serif;font-size:28px;font-weight:600;letter-spacing:4px;background:linear-gradient(135deg,var(--g2),var(--g3));-webkit-background-clip:text;-webkit-text-fill-color:transparent;text-align:center;margin-bottom:4px;margin-top:14px}
+.lsub{font-size:10px;color:var(--t3);letter-spacing:2.5px;text-transform:uppercase;text-align:center;margin-bottom:28px}
+.lhint{text-align:center;margin-top:14px;font-size:11.5px;color:var(--t3)}
+.lhint b{color:var(--g);font-weight:500}
+`;
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/* APP */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+export default function App() {
+  const [auth, setAuth]   = useState(false);
+  const [creds, setCreds] = useState({nick:"admin",pass:"1234"});
+  const [page, setPage]   = useState("dashboard");
+  const [cli,  setCli]    = useState(CLIENTES);
+  const [emp,  setEmp]    = useState(EMPRESTIMOS);
+  const [par,  setPar]    = useState(PARCELAS_INIT);
+  const [toast, setToast] = useState(null);
+  const [det,  setDet]    = useState(null);
+  const [notas,setNotas]   = useState([]);
+
+  const say = msg => { setToast(msg); setTimeout(()=>setToast(null),3200) };
+  const go  = p   => { setPage(p); setDet(null) };
+  const nAtr  = par.filter(p=>p.status==="atrasada").length;
+  const amanha = new Date(); amanha.setDate(amanha.getDate()+1);
+  const amanhaStr = amanha.toISOString().split("T")[0];
+  const lembretes = par.filter(p=>p.venc===amanhaStr&&p.status!=="paga");
+  const nLemb = lembretes.length;
+
+  if (!auth) return <><style>{CSS}</style><Login creds={creds} onLogin={()=>setAuth(true)}/></>;
+
+  const NAV = [
+    {sec:"Principal"},
+    {id:"dashboard",     label:"Início",      icon:"home"},
+    {sec:"Gestão"},
+    {id:"clientes",      label:"Clientes",    icon:"users"},
+    {id:"emprestimos",   label:"Empréstimos", icon:"money"},
+    {id:"notas",         label:"Notas",       icon:"pdf"},
+    {id:"acompanhamento",label:"Acompanhamento", icon:"cal", badge:nAtr},
+    {sec:"Financeiro"},
+    {id:"relatorios",    label:"Relatórios",  icon:"chart"},
+    {id:"orcamento",     label:"Orçamento",   icon:"calc"},
+    {id:"lembretes",     label:"Lembretes",   icon:"bell",  badge:lembretes.length},
+    {sec:"Sistema"},
+    {id:"configuracoes", label:"Config.",     icon:"gear"},
+  ];
+  const BNAV = [
+    {id:"dashboard",    label:"Início",     icon:"home"},
+    {id:"clientes",     label:"Clientes",   icon:"users"},
+    {id:"emprestimos",  label:"Empréstimos",icon:"money"},
+    {id:"notas",        label:"Notas",       icon:"pdf"},
+    {id:"acompanhamento",label:"Acomp.",     icon:"cal", badge:nAtr},
+        {id:"relatorios",   label:"Relatórios", icon:"chart"},
+    {id:"orcamento",    label:"Orçamento",  icon:"calc"},
+    {id:"lembretes",    label:"Lemb.",     icon:"bell", badge:nLemb},
+    {id:"configuracoes",label:"Config.",    icon:"gear"},
+  ];
+
+  const ctx = {cli,setCli,emp,setEmp,par,setPar,say,det,setDet,go,lembretes,creds,setCreds,notas,setNotas};
+  const PAGES = {
+    dashboard:     <Dashboard    {...ctx}/>,
+    clientes:      <PgClientes   {...ctx}/>,
+    emprestimos:   <PgEmp        {...ctx}/>,
+    acompanhamento: <PgAcomp        {...ctx}/>,
+    notas:          <PgNotas         {...ctx}/>,
+    
+    relatorios:    <PgRel        {...ctx}/>,
+    orcamento:     <PgOrcamento  {...ctx}/>,
+    lembretes:     <PgLembretes   {...ctx}/>,
+    configuracoes: <PgConfig     say={say} creds={creds} setCreds={setCreds}/>,
+  };
+
+  return (
+    <>
+      <style>{CSS}</style>
+      {toast && <div className="toast"><div className="ti"><Ic n="check" s={12}/></div>{toast}</div>}
+
+      {/* MOBILE HEADER */}
+      <div className="mob-header">
+        <div className="mob-logo"><Logo size={34}/><div className="mob-brand">CRED X</div></div>
+        <div style={{width:34,height:34,borderRadius:9,background:"var(--gd2)",border:"1px solid var(--gb2)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:"var(--g)",position:"relative",WebkitTapHighlightColor:"transparent"}} onClick={()=>go("lembretes")}>
+          <Ic n="bell" s={16}/>
+          {(nAtr+nLemb)>0&&<div style={{position:"absolute",top:5,right:5,width:7,height:7,background:"var(--rd)",borderRadius:"50%",border:"1.5px solid var(--k1)"}}/>}
+        </div>
+      </div>
+
+      <div className="layout">
+        {/* SIDEBAR */}
+        <aside className="sidebar">
+          <div className="sb-logo">
+            <Logo size={40}/>
+            <div className="sb-texts">
+              <div className="sb-brand">CRED X</div>
+              <div className="sb-tagline">Controle Financeiro</div>
+            </div>
+          </div>
+          <nav className="sb-nav">
+            {NAV.map((n,i)=>n.sec
+              ? <div key={i} className="sb-sec">{n.sec}</div>
+              : <div key={n.id} className={`ni ${page===n.id?"on":""}`} onClick={()=>go(n.id)}>
+                  <Ic n={n.icon} s={15}/> {n.label}
+                  {n.badge>0 && <span className="nb">{n.badge}</span>}
+                </div>
+            )}
+          </nav>
+          <div className="sb-foot">
+            <div className="sb-user">
+              <Logo size={30}/>
+              <div><div className="sbu-name">@{creds.nick}</div><div className="sbu-role">Administrador</div></div>
+              <button className="sb-exit" onClick={()=>setAuth(false)} title="Sair"><Ic n="exit" s={13}/></button>
+            </div>
+          </div>
+        </aside>
+
+        <main className="main">{PAGES[page]||PAGES.dashboard}</main>
+      </div>
+
+      {/* BOTTOM NAV */}
+      <div className="bottomnav">
+        <div className="bn-items">
+          {BNAV.map(n=>(
+            <div key={n.id} className={`bn-item ${page===n.id?"on":""}`} onClick={()=>go(n.id)}>
+              {n.badge>0 && <span className="bn-badge">{n.badge}</span>}
+              <Ic n={n.icon} s={19}/>
+              <span className="bn-label">{n.label}</span>
+              <div className="bn-dot"/>
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ─── LOGIN ──────────────────────────────────────────────────────────────── */
+function Login({creds,onLogin}) {
+  const [nick,setNick]=useState("");
+  const [pass,setPass]=useState("");
+  const [err,setErr]=useState("");
+  const [bio,setBio]=useState(false);
+  const entrar=()=>{
+    if(nick===creds.nick&&pass===creds.pass){onLogin();}
+    else setErr("Nickname ou senha incorretos.");
+  };
+  const simBio=()=>{
+    setBio(true);
+    setTimeout(()=>{setBio(false);onLogin();},1200);
+  };
+  return (
+    <>
+      <style>{CSS}</style>
+      <div className="login-wrap">
+        <div className="login-box">
+          <div style={{display:"flex",justifyContent:"center"}}><Logo size={60}/></div>
+          <div className="lbrand">CRED X</div>
+          <div className="lsub">Controle Financeiro</div>
+          <div className="fld"><label>Nickname</label><input value={nick} onChange={e=>setNick(e.target.value)} placeholder="seu nickname" autoCapitalize="none"/></div>
+          <div className="fld"><label>Senha</label><input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="••••••" onKeyDown={e=>e.key==="Enter"&&entrar()}/></div>
+          {err&&<div style={{fontSize:11,color:"var(--rd)",textAlign:"center",marginBottom:10}}>{err}</div>}
+          <button className="btn bg bfw" onClick={entrar}><Ic n="lock" s={14}/> Entrar</button>
+          <div style={{display:"flex",alignItems:"center",gap:10,margin:"22px 0 6px"}}>
+            <div style={{flex:1,height:1,background:"linear-gradient(90deg,transparent,rgba(200,168,74,.2))"}}/>
+            <span style={{fontSize:10,color:"var(--t3)",letterSpacing:"1.5px",textTransform:"uppercase"}}>ou</span>
+            <div style={{flex:1,height:1,background:"linear-gradient(90deg,rgba(200,168,74,.2),transparent)"}}/>
+          </div>
+          <div onClick={simBio} style={{cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:10,padding:"18px 0 6px"}}>
+            <div style={{
+              width:72,height:72,borderRadius:"50%",position:"relative",display:"flex",alignItems:"center",justifyContent:"center",
+              background:"radial-gradient(ellipse at 30% 25%,rgba(255,255,255,0.18) 0%,transparent 55%),linear-gradient(145deg,rgba(200,168,74,0.12) 0%,rgba(7,8,10,0.6) 100%)",
+              border:"1px solid rgba(200,168,74,0.3)",
+              boxShadow:bio?"0 0 0 6px rgba(200,168,74,0.15),0 0 24px rgba(200,168,74,0.4),inset 0 1px 0 rgba(255,255,255,0.2)":"inset 0 1px 0 rgba(255,255,255,0.18),inset 0 -1px 0 rgba(0,0,0,0.2),0 4px 20px rgba(200,168,74,0.15)",
+              backdropFilter:"blur(16px)",WebkitBackdropFilter:"blur(16px)",
+              transition:"all 0.3s ease",
+              animation:bio?"bioScan 1s ease-in-out infinite":""
+            }}>
+              <div style={{position:"absolute",top:"8%",left:"10%",width:"50%",height:"38%",background:"linear-gradient(135deg,rgba(255,255,255,0.28) 0%,transparent 100%)",borderRadius:"50%",filter:"blur(3px)",transform:"rotate(-20deg)"}}/>
+              <svg width="40" height="40" viewBox="0 0 100 100" fill="none" style={{position:"relative",zIndex:2,filter:bio?"drop-shadow(0 0 5px rgba(200,168,74,1))":"drop-shadow(0 0 2px rgba(200,168,74,0.8))"}}>
+                <defs>
+                  <linearGradient id="fg" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor={bio?"#ffffff":"#f8e8a0"}/>
+                    <stop offset="50%" stopColor={bio?"#f0d47a":"#dbb85a"}/>
+                    <stop offset="100%" stopColor={bio?"#ffffff":"#c8a84a"}/>
+                  </linearGradient>
+                </defs>
+                {/* Canto superior esquerdo */}
+                <path d="M30 5 L12 5 Q5 5 5 12 L5 30" stroke="url(#fg)" strokeWidth="6.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                {/* Canto superior direito */}
+                <path d="M70 5 L88 5 Q95 5 95 12 L95 30" stroke="url(#fg)" strokeWidth="6.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                {/* Canto inferior esquerdo */}
+                <path d="M5 70 L5 88 Q5 95 12 95 L30 95" stroke="url(#fg)" strokeWidth="6.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                {/* Canto inferior direito */}
+                <path d="M95 70 L95 88 Q95 95 88 95 L70 95" stroke="url(#fg)" strokeWidth="6.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                {/* Olho esquerdo */}
+                <line x1="35" y1="30" x2="35" y2="44" stroke="url(#fg)" strokeWidth="6.5" strokeLinecap="round"/>
+                {/* Olho direito */}
+                <line x1="65" y1="30" x2="65" y2="44" stroke="url(#fg)" strokeWidth="6.5" strokeLinecap="round"/>
+              </svg>
+            </div>
+            <div style={{fontSize:11,color:bio?"var(--g2)":"var(--t3)",letterSpacing:"0.5px",transition:"color 0.3s"}}>
+              {bio?"Verificando identidade…":"Entrar com Face ID"}
+            </div>
+          </div>
+          <div className="lhint">Demo: <b>@{creds.nick}</b> · senha <b>{creds.pass}</b></div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ─── DASHBOARD ──────────────────────────────────────────────────────────── */
+function Dashboard({emp,par,cli}) {
+  const tE  = emp.filter(e=>e.status!=="quitado").reduce((s,e)=>s+e.valor,0);
+  const tR  = par.filter(p=>p.status==="paga").reduce((s,p)=>s+p.valor,0);
+  const tA  = par.filter(p=>p.status==="atrasada").reduce((s,p)=>s+p.valor,0);
+  const lucroTotal = par.filter(p=>p.status==="paga").reduce((s,p)=>{const e=emp.find(x=>x.id===p.empId);return s+(e?p.valor-(e.valor/e.nParcelas):0);},0);
+  const rentPct = tE>0?(lucroTotal/tE)*100:0;
+  const bars=[380,620,840,720,1050,810,950];
+  const maxB=Math.max(...bars);
+  const meses=["Out","Nov","Dez","Jan","Fev","Mar","Abr"];
+  const atrasadas=par.filter(p=>p.status==="atrasada");
+  return (
+    <div className="pg">
+      <div className="phead">
+        <div>
+          <div className="pey">Visão Geral</div>
+          <div className="ptt">Dashboard</div>
+          <div className="psb">{new Date().toLocaleDateString("pt-BR",{day:"numeric",month:"long",year:"numeric"})}</div>
+        </div>
+      </div>
+      <div className="stats">
+        {[
+          {l:"Carteira Ativa",v:R(tE),vc:"svg_",sc:"scg",ic:"sig",ico:"money",ft:`${emp.filter(e=>e.status==="ativo").length} ativos`},
+          {l:"Total Recebido",v:R(tR),vc:"svgr",sc:"scgr",ic:"sigr",ico:"up",ft:`${par.filter(p=>p.status==="paga").length} pagas`},
+          {l:"Em Atraso",v:R(tA),vc:"svr",sc:"scr",ic:"sir",ico:"warn",ft:`${atrasadas.length} parcelas`},
+          {l:"Rentabilidade",v:Pct(rentPct),vc:"svor",sc:"scor",ic:"sior",ico:"chart",ft:`Lucro: ${R(lucroTotal)}`},
+        ].map((s,i)=>(
+          <div key={i} className={`sc ${s.sc}`}>
+            <div className={`si ${s.ic}`}><Ic n={s.ico} s={15}/></div>
+            <div className="sl">{s.l}</div>
+            <div className={`sv ${s.vc}`}>{s.v}</div>
+            <div className="sf_">{s.ft}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr",gap:12}}>
+        <div className="card">
+          <div className="ct">Entradas Mensais</div>
+          <div className="mini-chart">
+            {bars.map((v,i)=><div key={i} className="bar_" style={{height:`${(v/maxB)*100}%`,background:i===bars.length-1?"linear-gradient(180deg,var(--g2),var(--g))":"var(--k3)",opacity:i===bars.length-1?1:0.6}}/>)}
+          </div>
+          <div style={{display:"flex",gap:4,marginTop:5}}>
+            {meses.map(m=><div key={m} className="bar-lbl">{m}</div>)}
+          </div>
+        </div>
+        {atrasadas.length>0 && (
+          <div className="card">
+            <div className="ct" style={{color:"var(--rd)"}}>⚠ Parcelas em Atraso</div>
+            {atrasadas.slice(0,4).map(p=>{
+              const e=EMPRESTIMOS.find(x=>x.id===p.empId);
+              const c=CLIENTES.find(x=>e&&x.id===e.clienteId);
+              return (
+                <div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid rgba(255,255,255,.03)"}}>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:500}}>{c?.nome?.split(" ").slice(0,2).join(" ")}</div>
+                    <div style={{fontSize:11,color:"var(--t3)"}}>Parcela {p.num} · venc. {DT(p.venc)}</div>
+                  </div>
+                  <div style={{color:"var(--rd)",fontWeight:600}}>{R(p.valor)}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div className="card">
+          <div className="ct">Saúde da Carteira</div>
+          {[
+            {l:"Clientes ativos",v:cli.filter(c=>c.ativo).length,t:cli.length,c:"linear-gradient(90deg,var(--g),var(--g3))"},
+            {l:"Empréstimos em dia",v:emp.filter(e=>e.status==="ativo").length,t:emp.length,c:"var(--gr)"},
+            {l:"Inadimplência",v:emp.filter(e=>e.status==="inadimplente").length,t:emp.length,c:"var(--rd)"},
+          ].map((item,i)=>(
+            <div key={i} style={{marginBottom:12}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                <span style={{fontSize:12,color:"var(--t2)"}}>{item.l}</span>
+                <span style={{fontSize:12,fontWeight:600,color:i===0?"var(--g2)":i===1?"var(--gr)":"var(--rd)"}}>{item.v}/{item.t}</span>
+              </div>
+              <div className="pgb"><div className="pgf" style={{width:`${(item.v/item.t)*100}%`,background:item.c}}/></div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── CLIENTES ───────────────────────────────────────────────────────────── */
+function PgClientes({cli,setCli,emp,par,say,det,setDet}) {
+  const [q,setQ]=useState("");
+  const [modal,setModal]=useState(false);
+  const [form,setForm]=useState({nome:"",cpf:"",telefone:"",rua:"",numero:"",bairro:"",cep:"",avalista:"",observacoes:"",ativo:true});
+  const list=cli.filter(c=>c.nome.toLowerCase().includes(q.toLowerCase())||c.cpf.includes(q));
+
+  const save=()=>{
+    if(!form.nome||!form.cpf) return;
+    setCli(p=>[...p,{...form,id:Date.now(),resp:"Admin",dt:new Date().toISOString().split("T")[0]}]);
+    setModal(false);
+    setForm({nome:"",cpf:"",telefone:"",rua:"",numero:"",bairro:"",cep:"",avalista:"",observacoes:"",ativo:true});
+    say("Cliente cadastrado com sucesso!");
+  };
+
+  if(det?.type==="cliente"){
+    const c=cli.find(x=>x.id===det.id);
+    const emps=emp.filter(e=>e.clienteId===c.id);
+    const pars=par.filter(p=>emps.some(e=>e.id===p.empId));
+    return (
+      <div className="pg">
+        <div className="back-btn" onClick={()=>setDet(null)}><Ic n="back" s={12}/> Voltar</div>
+        <div className="phead">
+          <div><div className="pey">Ficha do Cliente</div><div className="ptt">{c.nome}</div><div className="psb">Cad. {DT(c.dt)}</div></div>
+          <span className={`bd ${c.ativo?"ativo":"inativo"}`}>{c.ativo?"ativo":"inativo"}</span>
+        </div>
+        <div className="dg">
+          <div className="card">
+            <div className="ct">Dados Cadastrais</div>
+            {[["CPF/CNPJ",c.cpf],["Telefone",c.telefone||"—"],["Rua",c.rua||"—"],["Número",c.numero||"—"],["Bairro",c.bairro||"—"],["CEP",c.cep||"—"],["Avalista",c.avalista||"—"],["Observações",c.observacoes||"—"]].map(([k,v])=>(
+              <div key={k} className="ir"><span className="ik">{k}</span><span className="iv">{v}</span></div>
+            ))}
+          </div>
+          <div className="card">
+            <div className="ct">Financeiro</div>
+            {[
+              ["Total emprestado",R(emps.reduce((s,e)=>s+e.valor,0))],
+              ["Empréstimos",emps.length],
+              ["Pagas",pars.filter(p=>p.status==="paga").length],
+              ["Atrasadas",pars.filter(p=>p.status==="atrasada").length],
+            ].map(([k,v])=>(
+              <div key={k} className="ir"><span className="ik">{k}</span><span className="iv">{v}</span></div>
+            ))}
+          </div>
+        </div>
+        <div className="tw">
+          <div className="tht"><div className="tl">Empréstimos</div></div>
+          {emps.length===0 ? <div className="empty"><div className="et">Sem empréstimos</div></div> : (
+            <>
+              <table className="dtable">
+                <thead><tr><th>Valor</th><th>Parcelas</th><th>Vl. Parcela</th><th>Total</th><th>Contrato</th><th>Status</th></tr></thead>
+                <tbody>{emps.map(e=>(
+                  <tr key={e.id}>
+                    <td style={{fontWeight:600,color:"var(--g2)"}}>{R(e.valor)}</td>
+                    <td>{e.nParcelas}x</td>
+                    <td style={{fontWeight:600}}>{R(e.vParcela)}</td>
+                    <td>{R(e.vTotal)}</td>
+                    <td style={{color:"var(--t3)"}}>{DT(e.dtContrato)}</td>
+                    <td><span className={`bd ${e.status}`}>{e.status}</span></td>
+                  </tr>
+                ))}</tbody>
+              </table>
+              <div className="mlist">{emps.map(e=>(
+                <div key={e.id} className="mitem">
+                  <div className="mitem-row">
+                    <div className="mav gold"><Ic n="money" s={16}/></div>
+                    <div className="mbody">
+                      <div className="mname">{R(e.valor)} · {e.nParcelas}x</div>
+                      <div className="msub">Parcela: {R(e.vParcela)} · {DT(e.dtContrato)}</div>
+                    </div>
+                    <div className="mright"><span className={`bd ${e.status}`}>{e.status}</span></div>
+                  </div>
+                </div>
+              ))}</div>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="pg">
+      <div className="phead">
+        <div><div className="pey">Gestão</div><div className="ptt">Clientes</div><div className="psb">{cli.filter(c=>c.ativo).length} ativos de {cli.length}</div></div>
+        <button className="btn bg" onClick={()=>setModal(true)}><Ic n="plus" s={14}/> Novo</button>
+      </div>
+      <div className="tw">
+        <div className="tht">
+          <div className="tl">Lista</div>
+          <div className="srch"><Ic n="search" s={13}/><input placeholder="Buscar…" value={q} onChange={e=>setQ(e.target.value)}/></div>
+        </div>
+        <table className="dtable">
+          <thead><tr><th>Nome</th><th>CPF/CNPJ</th><th>Telefone</th><th>Bairro</th><th>Avalista</th><th>Status</th><th></th></tr></thead>
+          <tbody>{list.map(c=>(
+            <tr key={c.id}>
+              <td>
+                <div style={{display:"flex",alignItems:"center",gap:9}}>
+                  <div style={{width:30,height:30,borderRadius:7,background:"var(--gd)",color:"var(--g2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,fontFamily:"Cinzel",flexShrink:0}}>{AV(c.nome)}</div>
+                  <div><div style={{fontWeight:500}}>{c.nome}</div><div style={{fontSize:11,color:"var(--t3)"}}>{DT(c.dt)}</div></div>
+                </div>
+              </td>
+              <td style={{color:"var(--t2)"}}>{c.cpf}</td>
+              <td>{c.telefone||"—"}</td>
+              <td style={{color:"var(--t2)"}}>{c.bairro||"—"}</td>
+              <td style={{color:"var(--t2)"}}>{c.avalista||"—"}</td>
+              <td><span className={`bd ${c.ativo?"ativo":"inativo"}`}>{c.ativo?"ativo":"inativo"}</span></td>
+              <td><button className="btn bgh bsm" onClick={()=>setDet({type:"cliente",id:c.id})}><Ic n="eye" s={13}/> Ver</button></td>
+            </tr>
+          ))}</tbody>
+        </table>
+        <div className="mlist">{list.map(c=>(
+          <div key={c.id} className="mitem" onClick={()=>setDet({type:"cliente",id:c.id})}>
+            <div className="mitem-row">
+              <div className="mav gold">{AV(c.nome)}</div>
+              <div className="mbody">
+                <div className="mname">{c.nome}</div>
+                <div className="msub">{c.cpf} · {c.bairro||c.telefone}</div>
+              </div>
+              <div className="mright">
+                <span className={`bd ${c.ativo?"ativo":"inativo"}`}>{c.ativo?"ativo":"inativo"}</span>
+                <div style={{color:"var(--t3)",marginTop:4,display:"flex",justifyContent:"flex-end"}}><Ic n="eye" s={14}/></div>
+              </div>
+            </div>
+          </div>
+        ))}</div>
+        {list.length===0&&<div className="empty"><div className="et">Nenhum resultado</div></div>}
+      </div>
+      {modal&&(
+        <div className="ov" onClick={e=>e.target===e.currentTarget&&setModal(false)}>
+          <div className="modal">
+            <div className="modal-handle"/>
+            <div className="mtt">Novo Cliente</div>
+            <div className="mst">Preencha os dados abaixo</div>
+            <div className="g2">
+              <div className="fld"><label>Nome completo *</label><input value={form.nome} onChange={e=>setForm({...form,nome:e.target.value})} placeholder="Nome completo"/></div>
+              <div className="fld"><label>CPF / CNPJ *</label><input value={form.cpf} onChange={e=>setForm({...form,cpf:maskDoc(e.target.value)})} placeholder="000.000.000-00" inputMode="numeric"/></div>
+              <div className="fld"><label>Telefone</label><input type="tel" value={form.telefone} onChange={e=>setForm({...form,telefone:maskFone(e.target.value)})} placeholder="(00) 00000-0000" inputMode="numeric"/></div>
+            </div>
+            <div className="g3">
+              <div className="fld" style={{gridColumn:"1/3"}}><label>Rua</label><input value={form.rua} onChange={e=>setForm({...form,rua:e.target.value})} placeholder="Nome da rua"/></div>
+              <div className="fld"><label>Número</label><input value={form.numero} onChange={e=>setForm({...form,numero:e.target.value})} placeholder="Nº"/></div>
+            </div>
+            <div className="g2">
+              <div className="fld"><label>Bairro</label><input value={form.bairro} onChange={e=>setForm({...form,bairro:e.target.value})} placeholder="Bairro"/></div>
+              <div className="fld"><label>CEP</label><input value={form.cep} onChange={e=>setForm({...form,cep:maskCEP(e.target.value)})} placeholder="00000-000" inputMode="numeric"/></div>
+            </div>
+            <div className="fld"><label>Avalista</label><input value={form.avalista} onChange={e=>setForm({...form,avalista:e.target.value})} placeholder="Nome do avalista"/></div>
+            <div className="fld"><label>Observações</label><textarea value={form.observacoes} onChange={e=>setForm({...form,observacoes:e.target.value})} placeholder="Informações adicionais…"/></div>
+            <div className="mf">
+              <button className="btn bgh" onClick={()=>setModal(false)}>Cancelar</button>
+              <button className="btn bg" onClick={save}><Ic n="check" s={14}/> Cadastrar</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── EMPRÉSTIMOS ────────────────────────────────────────────────────────── */
+function PgEmp({cli,emp,setEmp,par,setPar,say,det,setDet}) {
+  const [tab,setTab]=useState("todos");
+  const [modal,setModal]=useState(false);
+  const [form,setForm]=useState({clienteId:"",nParcelas:"",dtContrato:"",dtVencimento:""});
+  const [valorDisp, onValorChange, valorNum] = useMoney("");
+
+  const vParcela = calcParcela(valorNum, parseInt(form.nParcelas)||0);
+  const vTotal   = calcTotal(valorNum, parseInt(form.nParcelas)||0);
+
+  const save=()=>{
+    if(!form.clienteId||!valorNum||!form.nParcelas||!form.dtContrato||!form.dtVencimento) return;
+    const ne={
+      id:Date.now(), clienteId:parseInt(form.clienteId),
+      valor:valorNum, nParcelas:parseInt(form.nParcelas),
+      vParcela, vTotal, dtContrato:form.dtContrato, dtVencimento:form.dtVencimento,
+      status:"ativo", resp:"Admin", dt:new Date().toISOString().split("T")[0]
+    };
+    setEmp(p=>[...p,ne]);
+    const np=Array.from({length:ne.nParcelas},(_,i)=>{
+      const d=new Date(ne.dtVencimento+"T12:00:00"); d.setMonth(d.getMonth()+i);
+      return{id:Date.now()+i+1,empId:ne.id,num:i+1,valor:ne.vParcela,venc:d.toISOString().split("T")[0],status:"pendente",pago:null};
+    });
+    setPar(p=>[...p,...np]);
+    setModal(false);
+    setForm({clienteId:"",nParcelas:"",dtContrato:"",dtVencimento:""});
+    say(`Empréstimo criado! ${ne.nParcelas} parcelas geradas.`);
+  };
+
+  const filtered=emp.filter(e=>tab==="todos"||e.status===tab);
+
+  if(det?.type==="emprestimo"){
+    const e=emp.find(x=>x.id===det.id);
+    const c=cli.find(x=>x.id===e.clienteId);
+    const ps=par.filter(p=>p.empId===e.id);
+    const pagas=ps.filter(p=>p.status==="paga").length;
+    const recebido=ps.filter(p=>p.status==="paga").reduce((s,p)=>s+p.valor,0);
+    return (
+      <div className="pg">
+        <div className="back-btn" onClick={()=>setDet(null)}><Ic n="back" s={12}/> Voltar</div>
+        <div className="phead">
+          <div><div className="pey">Empréstimo #{e.id}</div><div className="ptt">{c?.nome}</div><div className="psb">Contrato {DT(e.dtContrato)}</div></div>
+          <span className={`bd ${e.status}`}>{e.status}</span>
+        </div>
+        <div className="dg">
+          <div className="card">
+            <div className="ct">Detalhes</div>
+            {[["Valor",R(e.valor)],["Nº Parcelas",`${e.nParcelas}x`],["Valor Parcela",R(e.vParcela)],["Total",R(e.vTotal)],["Contrato",DT(e.dtContrato)],["Vencimento",DT(e.dtVencimento)]].map(([k,v])=>(
+              <div key={k} className="ir"><span className="ik">{k}</span><span className="iv">{v}</span></div>
+            ))}
+          </div>
+          <div className="card">
+            <div className="ct">Progresso</div>
+            <div style={{textAlign:"center",padding:"8px 0 12px"}}>
+              <div style={{fontSize:38,fontWeight:700,fontFamily:"Cormorant Garamond",color:"var(--g2)",lineHeight:1}}>{pagas}</div>
+              <div style={{fontSize:11,color:"var(--t3)",marginBottom:6}}>de {ps.length} pagas</div>
+              <div className="pgb"><div className="pgf" style={{width:`${(pagas/ps.length)*100}%`}}/></div>
+              <div style={{fontSize:10,color:"var(--t3)",marginTop:4}}>{((pagas/ps.length)*100).toFixed(0)}%</div>
+            </div>
+            <div className="gdl"/>
+            {[["Recebido",R(recebido),"var(--gr)"],["A receber",R(e.vTotal-recebido),"var(--g2)"],["Atrasado",R(ps.filter(p=>p.status==="atrasada").reduce((s,p)=>s+p.valor,0)),"var(--rd)"]].map(([k,v,col])=>(
+              <div key={k} className="ir"><span className="ik">{k}</span><span className="iv" style={{color:col}}>{v}</span></div>
+            ))}
+          </div>
+        </div>
+        <div className="tw">
+          <div className="tht"><div className="tl">Parcelas</div></div>
+          <table className="dtable">
+            <thead><tr><th>Nº</th><th>Valor</th><th>Vencimento</th><th>Status</th><th>Pagamento</th></tr></thead>
+            <tbody>{ps.map(p=>(
+              <tr key={p.id}>
+                <td style={{color:"var(--t3)",fontWeight:600}}>{p.num}ª</td>
+                <td style={{fontWeight:500}}>{R(p.valor)}</td>
+                <td style={{color:p.status==="atrasada"?"var(--rd)":"var(--t2)"}}>{DT(p.venc)}</td>
+                <td><span className={`bd ${p.status}`}>{p.status}</span></td>
+                <td style={{color:"var(--t3)"}}>{p.pago?DT(p.pago):"—"}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+          <div className="mlist">{ps.map(p=>(
+            <div key={p.id} className="mitem">
+              <div className="mitem-row">
+                <div className={`mav ${p.status==="atrasada"?"red":p.status==="paga"?"green":"gold"}`} style={{fontSize:12,fontWeight:700}}>{p.num}ª</div>
+                <div className="mbody"><div className="mname">{R(p.valor)}</div><div className="msub">Venc. {DT(p.venc)}</div></div>
+                <div className="mright"><span className={`bd ${p.status}`}>{p.status}</span></div>
+              </div>
+            </div>
+          ))}</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="pg">
+      <div className="phead">
+        <div><div className="pey">Gestão</div><div className="ptt">Empréstimos</div><div className="psb">{emp.length} registros</div></div>
+        <button className="btn bg" onClick={()=>setModal(true)}><Ic n="plus" s={14}/> Novo</button>
+      </div>
+      <div className="tabs">
+        {[["todos","Todos"],["ativo","Ativos"],["quitado","Quitados"],["inadimplente","Inadim."]].map(([v,l])=>(
+          <div key={v} className={`tab ${tab===v?"on":""}`} onClick={()=>setTab(v)}>{l}</div>
+        ))}
+      </div>
+      <div className="tw">
+        <table className="dtable">
+          <thead><tr><th>Cliente</th><th>Valor</th><th>Parcelas</th><th>Vl. Parcela</th><th>Total</th><th>Contrato</th><th>Status</th><th></th></tr></thead>
+          <tbody>{filtered.map(e=>{
+            const c=cli.find(x=>x.id===e.clienteId);
+            const ps=par.filter(p=>p.empId===e.id);
+            const pg=ps.filter(p=>p.status==="paga").length;
+            return (
+              <tr key={e.id}>
+                <td style={{fontWeight:500}}>{c?.nome?.split(" ").slice(0,2).join(" ")}</td>
+                <td style={{fontWeight:600,color:"var(--g2)"}}>{R(e.valor)}</td>
+                <td>
+                  <div style={{fontSize:12}}>{pg}/{e.nParcelas}</div>
+                  <div className="pgb" style={{width:52,marginTop:3}}><div className="pgf" style={{width:`${(pg/e.nParcelas)*100}%`}}/></div>
+                </td>
+                <td style={{fontWeight:600}}>{R(e.vParcela)}</td>
+                <td>{R(e.vTotal)}</td>
+                <td style={{color:"var(--t3)"}}>{DT(e.dtContrato)}</td>
+                <td><span className={`bd ${e.status}`}>{e.status}</span></td>
+                <td><button className="btn bgh bsm" onClick={()=>setDet({type:"emprestimo",id:e.id})}><Ic n="eye" s={13}/> Ver</button></td>
+              </tr>
+            );
+          })}</tbody>
+        </table>
+        <div className="mlist">{filtered.map(e=>{
+          const c=cli.find(x=>x.id===e.clienteId);
+          return (
+            <div key={e.id} className="mitem" onClick={()=>setDet({type:"emprestimo",id:e.id})}>
+              <div className="mitem-row">
+                <div className="mav gold">{AV(c?.nome||"?")}</div>
+                <div className="mbody">
+                  <div className="mname">{c?.nome?.split(" ").slice(0,2).join(" ")}</div>
+                  <div className="msub">{e.nParcelas}x de {R(e.vParcela)} · {DT(e.dtContrato)}</div>
+                </div>
+                <div className="mright">
+                  <div className="mval" style={{color:"var(--g2)"}}>{R(e.valor)}</div>
+                  <span className={`bd ${e.status}`}>{e.status}</span>
+                </div>
+              </div>
+            </div>
+          );
+        })}</div>
+      </div>
+      {modal&&(
+        <div className="ov" onClick={e=>e.target===e.currentTarget&&setModal(false)}>
+          <div className="modal">
+            <div className="modal-handle"/>
+            <div className="mtt">Novo Empréstimo</div>
+            <div className="mst">Parcelas geradas automaticamente pela tabela</div>
+            <div className="fld"><label>Cliente *</label>
+              <select value={form.clienteId} onChange={e=>setForm({...form,clienteId:e.target.value})}>
+                <option value="">Selecione o cliente…</option>
+                {cli.filter(c=>c.ativo).map(c=><option key={c.id} value={c.id}>{c.nome}</option>)}
+              </select>
+            </div>
+            <div className="g2">
+              <div className="fld"><label>Valor *</label><input inputMode="numeric" value={valorDisp} onChange={onValorChange} placeholder="0,00" style={{letterSpacing:"0.5px"}}/><div className="hint">{valorNum>0?`= ${R(valorNum)}`:""}</div></div>
+              <div className="fld"><label>Nº Parcelas * (3–36)</label><input type="number" inputMode="numeric" value={form.nParcelas} onChange={e=>setForm({...form,nParcelas:e.target.value})} placeholder="Ex: 12" min="3" max="36"/></div>
+              <div className="fld"><label>Valor da Parcela</label><input value={vParcela>0?R(vParcela):"—"} readOnly/><div className="hint">{vParcela>0?"Calculado automaticamente pela tabela":""}</div></div>
+              <div className="fld"><label>Total Calculado</label><input value={vTotal>0?R(vTotal):"—"} readOnly/></div>
+              <div className="fld"><label>Data Contratação *</label><input type="date" value={form.dtContrato} onChange={e=>setForm({...form,dtContrato:e.target.value})}/></div>
+              <div className="fld"><label>Data Vencimento *</label><input type="date" value={form.dtVencimento} onChange={e=>setForm({...form,dtVencimento:e.target.value})}/></div>
+            </div>
+            <div className="mf">
+              <button className="btn bgh" onClick={()=>setModal(false)}>Cancelar</button>
+              <button className="btn bg" onClick={save}><Ic n="check" s={14}/> Criar</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── PARCELAS ───────────────────────────────────────────────────────────── */
+function PgAcomp({par,setPar,emp,cli,say}) {
+  const hoje = new Date();
+  const [mesRef, setMesRef] = useState({ m: hoje.getMonth(), y: hoje.getFullYear() });
+  const [tab, setTab]       = useState("todas");
+  const [diaIni, setDiaIni] = useState("");
+  const [diaFim, setDiaFim] = useState("");
+  const [comp, setComp]     = useState(null);
+  const [viewComp, setViewComp] = useState(null);
+  const nAtr = par.filter(p=>p.status==="atrasada").length;
+
+  const pagar = id => {
+    const today=new Date().toISOString().split("T")[0];
+    const p=par.find(x=>x.id===id);
+    const e=emp.find(x=>x.id===p.empId);
+    const c=cli.find(x=>x.id===e?.clienteId);
+    setPar(prev=>prev.map(x=>x.id===id?{...x,status:"paga",pago:today}:x));
+    say(`Parcela ${p.num} paga com sucesso!`);
+  };
+
+  const nomeCli=eId=>{const e=emp.find(x=>x.id===eId);const c=cli.find(x=>x.id===e?.clienteId);return c?.nome?.split(" ").slice(0,2).join(" ")||"—";};
+
+  // Filtro por mês
+  const mesStr = `${mesRef.y}-${String(mesRef.m+1).padStart(2,"0")}`;
+  let filtered = par.filter(p=>p.venc.startsWith(mesStr));
+
+  // Filtro por período de dias
+  if(diaIni||diaFim){
+    filtered = filtered.filter(p=>{
+      const dia=parseInt(p.venc.split("-")[2]);
+      const ini=diaIni?parseInt(diaIni):1;
+      const fim=diaFim?parseInt(diaFim):31;
+      return dia>=ini && dia<=fim;
+    });
+  }
+
+  // Filtro por status
+  if(tab!=="todas") filtered=filtered.filter(p=>p.status===tab);
+
+  const prevMes=()=>{ let m=mesRef.m-1,y=mesRef.y; if(m<0){m=11;y--;} setMesRef({m,y}); };
+  const nextMes=()=>{ let m=mesRef.m+1,y=mesRef.y; if(m>11){m=0;y++;} setMesRef({m,y}); };
+
+  // Resumo do mês
+  const todasMes=par.filter(p=>p.venc.startsWith(mesStr));
+  const totPagas=todasMes.filter(p=>p.status==="paga").length;
+  const totAtr=todasMes.filter(p=>p.status==="atrasada").length;
+  const totPend=todasMes.filter(p=>p.status==="pendente").length;
+
+  return (
+    <div className="pg">
+      <div className="phead">
+        <div><div className="pey">Gestão</div><div className="ptt">Acompanhamento</div><div className="psb">{par.length} total · {nAtr} em atraso</div></div>
+      </div>
+
+      {/* NAVEGAÇÃO DE MÊS */}
+      <div className="month-nav">
+        <button className="month-btn" onClick={prevMes}><Ic n="chevL" s={16}/></button>
+        <div>
+          <div className="month-title">{MESES[mesRef.m]} {mesRef.y}</div>
+          <div className="month-sub">{totPagas} pagas · {totPend} pendentes · {totAtr} atrasadas</div>
+        </div>
+        <button className="month-btn" onClick={nextMes}><Ic n="chevR" s={16}/></button>
+      </div>
+
+      {/* FILTRO POR DIAS */}
+      <div className="day-filter">
+        <div className="day-filter-title">Filtrar por período</div>
+        <div className="day-inputs">
+          <span style={{fontSize:12,color:"var(--t3)"}}>Dia</span>
+          <input type="number" inputMode="numeric" placeholder="01" min="1" max="31" value={diaIni} onChange={e=>setDiaIni(e.target.value)}/>
+          <span className="day-sep">até</span>
+          <input type="number" inputMode="numeric" placeholder="31" min="1" max="31" value={diaFim} onChange={e=>setDiaFim(e.target.value)}/>
+          <span style={{fontSize:12,color:"var(--t3)"}}>de {MESES[mesRef.m]}</span>
+          {(diaIni||diaFim)&&<button className="btn bgh bsm" onClick={()=>{setDiaIni("");setDiaFim("");}}>Limpar</button>}
+        </div>
+      </div>
+
+      <div className="tabs">
+        {[["todas","Todas"],["pendente","Pendentes"],["paga","Pagas"],["atrasada","Atrasadas"]].map(([v,l])=>(
+          <div key={v} className={`tab ${tab===v?"on":""}`} onClick={()=>setTab(v)}>
+            {l}{v==="atrasada"&&nAtr>0&&<span className="tc">{nAtr}</span>}
+          </div>
+        ))}
+      </div>
+
+      <div className="tw">
+        <table className="dtable">
+          <thead><tr><th>Cliente</th><th>Nº</th><th>Valor</th><th>Vencimento</th><th>Status</th><th>Pagamento</th><th>Ações</th></tr></thead>
+          <tbody>{filtered.map(p=>(
+            <tr key={p.id}>
+              <td style={{fontWeight:500}}>{nomeCli(p.empId)}</td>
+              <td style={{color:"var(--t3)",fontWeight:600}}>{p.num}ª</td>
+              <td style={{fontWeight:600}}>{R(p.valor)}</td>
+              <td style={{color:p.status==="atrasada"?"var(--rd)":"var(--t2)",fontWeight:p.status==="atrasada"?600:400}}>{DT(p.venc)}</td>
+              <td><span className={`bd ${p.status}`}>{p.status}</span></td>
+              <td style={{color:"var(--t3)"}}>{p.pago?DT(p.pago):"—"}</td>
+              <td>
+                <div style={{display:"flex",gap:5}}>
+                  <button className={`btn bsm ${p.status==="paga"?"btn-pago":"btn-aberto"}`} onClick={()=>p.status!=="paga"&&pagar(p.id)} style={{cursor:p.status==="paga"?"default":"pointer",opacity:p.status==="paga"?0.7:1}}>
+                    {p.status==="paga"?<><Ic n="check" s={11}/> Pago</>:<><Ic n="warn" s={11}/> Em Aberto</>}
+                  </button>
+                  {p.comprovante ? <button className="btn bgr bsm" onClick={()=>setViewComp(p)}><Ic n="eye" s={11}/> Ver</button> : <button className="btn bgh bsm" onClick={()=>setComp(p.id)}><Ic n="upload" s={11}/> Anexar</button>}
+                </div>
+              </td>
+            </tr>
+          ))}</tbody>
+        </table>
+        <div className="mlist">{filtered.map(p=>(
+          <div key={p.id} className="mitem">
+            <div className="mitem-row">
+              <div className={`mav ${p.status==="atrasada"?"red":p.status==="paga"?"green":"gold"}`} style={{fontSize:12,fontWeight:700}}>{p.num}ª</div>
+              <div className="mbody">
+                <div className="mname">{nomeCli(p.empId)}</div>
+                <div className="msub">Venc. {DT(p.venc)}{p.pago?` · Pago ${DT(p.pago)}`:""}</div>
+              </div>
+              <div className="mright">
+                <div className="mval" style={{color:p.status==="atrasada"?"var(--rd)":p.status==="paga"?"var(--gr)":"var(--g2)"}}>{R(p.valor)}</div>
+                <div style={{marginTop:4,display:"flex",gap:4,justifyContent:"flex-end"}}>
+                  <button className={`btn bsm ${p.status==="paga"?"btn-pago":"btn-aberto"}`} onClick={()=>p.status!=="paga"&&pagar(p.id)} style={{padding:"4px 9px",fontSize:11,cursor:p.status==="paga"?"default":"pointer"}}>
+                    {p.status==="paga"?"✓ Pago":"● Em Aberto"}
+                  </button>
+                  {p.comprovante ? <button className="btn bgr bsm" style={{padding:"4px 8px"}} onClick={()=>setViewComp(p)}><Ic n="eye" s={11}/></button> : <button className="btn bgh bsm" style={{padding:"4px 8px"}} onClick={()=>setComp(p.id)}><Ic n="upload" s={11}/></button>}
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}</div>
+        {filtered.length===0&&<div className="empty"><div className="et">Nenhuma parcela</div><div className="es">Sem resultados para este período e filtro.</div></div>}
+      </div>
+
+      {comp&&(
+        <div className="ov" onClick={e=>e.target===e.currentTarget&&setComp(null)}>
+          <div className="modal" style={{maxWidth:440}}>
+            <div className="modal-handle"/>
+            <div className="mtt">Anexar Comprovante</div>
+            <div className="mst">Selecione ou envie o comprovante de pagamento</div>
+            {[{nome:"comprovante_pix.pdf",tipo:"pdf",tamanho:"84KB"},{nome:"recibo_pagamento.jpg",tipo:"img",tamanho:"210KB"},{nome:"transferencia_ted.pdf",tipo:"pdf",tamanho:"156KB"}].map((arq,i)=>(
+              <div key={i} style={{background:"rgba(7,8,10,0.9)",border:"1px solid var(--gb)",borderRadius:10,padding:"12px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:12,cursor:"pointer"}}
+                onClick={()=>{setPar(prev=>prev.map(x=>x.id===comp?{...x,comprovante:arq}:x));setComp(null);say("Comprovante anexado!");}}>
+                <div style={{width:36,height:36,borderRadius:8,background:"var(--rdd)",color:"var(--rd)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Ic n="pdf" s={16}/></div>
+                <div style={{flex:1}}><div style={{fontSize:13,fontWeight:500}}>{arq.nome}</div><div style={{fontSize:11,color:"var(--t3)"}}>{arq.tamanho}</div></div>
+                <Ic n="check" s={13}/>
+              </div>
+            ))}
+            <div className="uzn" style={{marginTop:8}} onClick={()=>{setPar(prev=>prev.map(x=>x.id===comp?{...x,comprovante:{nome:"novo_arquivo.pdf",tipo:"pdf",tamanho:"—"}}:x));setComp(null);say("Comprovante anexado!");}}>
+              <div style={{color:"var(--g)",marginBottom:8}}><Ic n="upload" s={26}/></div>
+              <div style={{fontSize:13,color:"var(--t2)"}}>Selecionar da galeria / arquivos</div>
+              <div style={{fontSize:11,color:"var(--t3)",marginTop:3}}>PDF, JPG ou PNG · até 10MB</div>
+            </div>
+            <div className="mf"><button className="btn bgh" onClick={()=>setComp(null)}>Cancelar</button></div>
+          </div>
+        </div>
+      )}
+      {viewComp&&(
+        <div className="ov" onClick={e=>e.target===e.currentTarget&&setViewComp(null)}>
+          <div className="modal" style={{maxWidth:440}}>
+            <div className="modal-handle"/>
+            <div className="mtt">Comprovante</div>
+            <div className="mst">Parcela {viewComp.num}ª · {viewComp.pago?DT(viewComp.pago):"—"}</div>
+            <div style={{background:"rgba(7,8,10,0.95)",border:"1px solid var(--gb)",borderRadius:12,padding:20,marginBottom:16}}>
+              <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:16}}>
+                <div style={{width:52,height:52,borderRadius:12,background:"var(--rdd)",display:"flex",alignItems:"center",justifyContent:"center",color:"var(--rd)"}}><Ic n="pdf" s={24}/></div>
+                <div><div style={{fontSize:14,fontWeight:600}}>{viewComp.comprovante?.nome}</div><div style={{fontSize:12,color:"var(--t3)"}}>{viewComp.comprovante?.tamanho}</div></div>
+              </div>
+              <div style={{background:"rgba(17,21,32,0.9)",borderRadius:10,padding:16,border:"1px solid var(--gb2)"}}>
+                <div style={{textAlign:"center",marginBottom:12,paddingBottom:12,borderBottom:"1px solid var(--gb2)"}}>
+                  <div style={{fontSize:10,color:"var(--g)",letterSpacing:2,fontWeight:700,marginBottom:3}}>COMPROVANTE DE PAGAMENTO</div>
+                  <div style={{fontSize:12,color:"var(--t2)"}}>Cred X</div>
+                </div>
+                {[["Parcela",`${viewComp.num}ª`],["Valor",R(viewComp.valor)],["Data Pagamento",viewComp.pago?DT(viewComp.pago):"—"],["Status","Confirmado ✓"]].map(([k,v])=>(
+                  <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:"1px solid rgba(255,255,255,.03)"}}>
+                    <span style={{fontSize:11,color:"var(--t3)"}}>{k}</span>
+                    <span style={{fontSize:12,fontWeight:600,color:k==="Status"?"var(--gr)":"var(--t)"}}>{v}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9}}>
+              <button className="btn bg bfw" onClick={()=>{say("Comprovante exportado!");setViewComp(null);}}><Ic n="dl" s={14}/> Exportar</button>
+              <button className="btn bwa bfw" onClick={()=>{say("Compartilhando via WhatsApp...");setViewComp(null);}}><Ic n="wa" s={14}/> WhatsApp</button>
+            </div>
+            <div className="mf"><button className="btn bgh" onClick={()=>setViewComp(null)}>Fechar</button></div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── RELATÓRIOS ─────────────────────────────────────────────────────────── */
+function PgRel({emp,par,cli}) {
+  const [tabRel,  setTabRel]  = useState("visao");
+  const [periodo, setPeriodo] = useState("mensal");
+  const hoje = new Date();
+  const [mesRef, setMesRef]   = useState({m:hoje.getMonth(), y:hoje.getFullYear()});
+
+  const tCapital  = emp.filter(e=>e.status!=="quitado").reduce((s,e)=>s+e.valor,0);
+  const tReceber  = emp.filter(e=>e.status!=="quitado").reduce((s,e)=>s+e.vTotal,0);
+  const tRecebido = par.filter(p=>p.status==="paga").reduce((s,p)=>s+p.valor,0);
+  const tAReceber = par.filter(p=>p.status!=="paga").reduce((s,p)=>s+p.valor,0);
+  const tAtraso   = par.filter(p=>p.status==="atrasada").reduce((s,p)=>s+p.valor,0);
+  const lucroTotal= par.filter(p=>p.status==="paga").reduce((s,p)=>{const e=emp.find(x=>x.id===p.empId);return s+(e?p.valor-(e.valor/e.nParcelas):0);},0);
+  const rentTotal = tCapital>0?(lucroTotal/tCapital)*100:0;
+  const inad      = emp.filter(e=>e.status==="inadimplente");
+  const inadPct   = emp.length>0?(inad.length/emp.length)*100:0;
+  const ticketMed = emp.length>0?tCapital/emp.length:0;
+  const prazoMed  = emp.length>0?emp.reduce((s,e)=>s+e.nParcelas,0)/emp.length:0;
+
+  const mesStr = `${mesRef.y}-${String(mesRef.m+1).padStart(2,"0")}`;
+  const HOJE_STR = new Date().toISOString().split("T")[0];
+  const getPars = () => {
+    switch(periodo) {
+      case "diario":    return par.filter(p=>p.pago===HOJE_STR);
+      case "semanal":   { const d=new Date(); d.setDate(d.getDate()-7); return par.filter(p=>p.pago&&new Date(p.pago+"T12:00:00")>=d); }
+      case "quinzenal": { const d=new Date(); d.setDate(d.getDate()-15); return par.filter(p=>p.pago&&new Date(p.pago+"T12:00:00")>=d); }
+      case "mensal":    return par.filter(p=>p.pago&&p.pago.startsWith(mesStr));
+      case "anual":     return par.filter(p=>p.pago&&p.pago.startsWith(String(mesRef.y)));
+      default:          return par.filter(p=>p.status==="paga");
+    }
+  };
+  const parsPeriodo    = getPars();
+  const recPeriodo     = parsPeriodo.reduce((s,p)=>s+p.valor,0);
+  const parsVenc       = par.filter(p=>p.venc.startsWith(periodo==="anual"?String(mesRef.y):mesStr));
+  const previsto       = parsVenc.reduce((s,p)=>s+p.valor,0);
+  const prevMes = ()=>{ let m=mesRef.m-1,y=mesRef.y; if(m<0){m=11;y--;} setMesRef({m,y}); };
+  const nextMes = ()=>{ let m=mesRef.m+1,y=mesRef.y; if(m>11){m=0;y++;} setMesRef({m,y}); };
+
+  const KPI = ({l,v,s,color="gold"}) => (
+    <div className={`kpi ${color}`}>
+      <div className="kpi-l">{l}</div>
+      <div className="kpi-v" style={{color:color==="gold"?"var(--g2)":color==="green"?"var(--gr)":color==="red"?"var(--rd)":"var(--or)"}}>{v}</div>
+      {s&&<div className="kpi-s">{s}</div>}
+    </div>
+  );
+  const RRow = ({label,value,sub,color}) => (
+    <div className="rel-row">
+      <div><div style={{fontSize:13,fontWeight:500,color:"var(--t)"}}>{label}</div>{sub&&<div style={{fontSize:11,color:"var(--t3)",marginTop:2}}>{sub}</div>}</div>
+      <div style={{fontWeight:700,fontSize:14,color:color||"var(--g2)",fontFamily:"Cormorant Garamond"}}>{value}</div>
+    </div>
+  );
+
+  return (
+    <div className="pg">
+      <div className="phead"><div><div className="pey">Análise</div><div className="ptt">Relatórios</div><div className="psb">Demonstrativos financeiros completos</div></div></div>
+      <div className="tabs">
+        {[["visao","Visão Geral"],["periodo","Por Período"],["clientes","Por Cliente"],["inadimplencia","Inadimplência"],["carteira","Carteira"]].map(([v,l])=>(
+          <div key={v} className={`tab ${tabRel===v?"on":""}`} onClick={()=>setTabRel(v)}>{l}</div>
+        ))}
+      </div>
+
+      {tabRel==="visao"&&(
+        <>
+          <div className="rel-kpi">
+            <KPI l="Capital em Giro"   v={R(tCapital)}    s={`${emp.filter(e=>e.status==="ativo").length} ativas`}            color="gold"/>
+            <KPI l="A Receber"         v={R(tAReceber)}   s="Parcelas em aberto"                                              color="orange"/>
+            <KPI l="Total Recebido"    v={R(tRecebido)}   s={`${par.filter(p=>p.status==="paga").length} pagas`}              color="green"/>
+            <KPI l="Lucro Estimado"    v={R(lucroTotal)}  s={`Rent. ${Pct(rentTotal)}`}                                      color="gold"/>
+          </div>
+          <div className="rel-kpi">
+            <KPI l="Em Atraso"         v={R(tAtraso)}     s={`${par.filter(p=>p.status==="atrasada").length} parcelas`}       color="red"/>
+            <KPI l="Inadimplência"     v={Pct(inadPct)}   s={`${inad.length} clientes`}                                      color="red"/>
+            <KPI l="Ticket Médio"      v={R(ticketMed)}   s="Por operação"                                                    color="gold"/>
+            <KPI l="Prazo Médio"       v={`${prazoMed.toFixed(0)}x`} s="Parcelas por contrato"                               color="orange"/>
+          </div>
+          <div className="rel-section">
+            <div className="rel-section-head"><div className="rel-section-title">Resumo da Carteira</div></div>
+            <RRow label="Capital total emprestado"  value={R(emp.reduce((s,e)=>s+e.valor,0))} sub="Inclui quitados"/>
+            <RRow label="Retorno total esperado"    value={R(emp.reduce((s,e)=>s+e.vTotal,0))}/>
+            <RRow label="Já recebido"               value={R(tRecebido)} color="var(--gr)"/>
+            <RRow label="A receber (em aberto)"     value={R(tAReceber)} color="var(--g2)"/>
+            <RRow label="Em atraso"                 value={R(tAtraso)}   color="var(--rd)"/>
+            <RRow label="Rentabilidade estimada"    value={Pct(rentTotal)} color="var(--or)"/>
+          </div>
+        </>
+      )}
+
+      {tabRel==="periodo"&&(
+        <>
+          <div className="pf">
+            {[["diario","Hoje"],["semanal","7 dias"],["quinzenal","15 dias"],["mensal","Mensal"],["anual","Anual"],["total","Total"]].map(([v,l])=>(
+              <button key={v} className={`pf-btn ${periodo===v?"on":""}`} onClick={()=>setPeriodo(v)}>{l}</button>
+            ))}
+          </div>
+          {(periodo==="mensal"||periodo==="anual")&&(
+            <div className="month-nav">
+              <button className="month-btn" onClick={prevMes}><Ic n="chevL" s={16}/></button>
+              <div className="month-title">{periodo==="mensal"?`${MESES[mesRef.m]} ${mesRef.y}`:mesRef.y}</div>
+              <button className="month-btn" onClick={nextMes}><Ic n="chevR" s={16}/></button>
+            </div>
+          )}
+          <div className="rel-kpi">
+            <KPI l="Recebido no período" v={R(recPeriodo)}  s={`${parsPeriodo.length} parcelas`} color="green"/>
+            <KPI l="Previsto no período" v={R(previsto)}    s={`${parsVenc.length} parcelas`}    color="gold"/>
+            <KPI l="% Realizado"         v={previsto>0?Pct((recPeriodo/previsto)*100):"—"} s="Sobre o previsto" color="orange"/>
+            <KPI l="Em atraso período"   v={R(parsVenc.filter(p=>p.status==="atrasada").reduce((s,p)=>s+p.valor,0))} s="Vencidas não pagas" color="red"/>
+          </div>
+          <div className="rel-section">
+            <div className="rel-section-head"><div className="rel-section-title">Parcelas Recebidas</div><div style={{fontSize:11,color:"var(--t3)"}}>{parsPeriodo.length} registros</div></div>
+            {parsPeriodo.length===0
+              ? <div className="empty"><div className="et">Nenhum recebimento neste período</div></div>
+              : parsPeriodo.slice(0,25).map(p=>{
+                  const e=emp.find(x=>x.id===p.empId); const c=cli.find(x=>x.id===e?.clienteId);
+                  return <RRow key={p.id} label={c?.nome?.split(" ").slice(0,2).join(" ")||"—"} sub={`Parcela ${p.num}ª · Pago ${DT(p.pago)}`} value={R(p.valor)} color="var(--gr)"/>;
+                })
+            }
+          </div>
+        </>
+      )}
+
+      {tabRel==="clientes"&&(
+        <div className="rel-section">
+          <div className="rel-section-head"><div className="rel-section-title">Situação por Cliente</div></div>
+          {cli.filter(c=>c.ativo).map(c=>{
+            const emps=emp.filter(e=>e.clienteId===c.id);
+            if(!emps.length) return null;
+            const ps  =par.filter(p=>emps.some(e=>e.id===p.empId));
+            const pg  =ps.filter(p=>p.status==="paga");
+            const atr =ps.filter(p=>p.status==="atrasada");
+            const tEmp=emps.reduce((s,e)=>s+e.valor,0);
+            const rec =pg.reduce((s,p)=>s+p.valor,0);
+            const luc =rec-tEmp*(pg.length/Math.max(ps.length,1));
+            const pct =ps.length>0?(pg.length/ps.length)*100:0;
+            return (
+              <div key={c.id} style={{padding:"14px 18px",borderBottom:"1px solid rgba(255,255,255,.03)"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:600,color:"var(--t)"}}>{c.nome}</div>
+                    <div style={{fontSize:11,color:"var(--t3)"}}>{emps.length} empréstimo(s) · {ps.length} parcelas</div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontFamily:"Cormorant Garamond",fontSize:16,fontWeight:700,color:"var(--g2)"}}>{R(tEmp)}</div>
+                    <div style={{fontSize:10,color:atr.length>0?"var(--rd)":"var(--gr)"}}>{atr.length>0?`${atr.length} em atraso`:"Em dia"}</div>
+                  </div>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:8}}>
+                  {[["Recebido",R(rec),"var(--gr)"],["A receber",R(emps.reduce((s,e)=>s+e.vTotal,0)-rec),"var(--g2)"],["Lucro",R(luc),"var(--or)"],["Rent.",tEmp>0?Pct((luc/tEmp)*100):"—","var(--or)"]].map(([l,v,col])=>(
+                    <div key={l} style={{background:"rgba(17,21,32,0.7)",borderRadius:8,padding:"8px 10px"}}>
+                      <div style={{fontSize:9,color:"var(--t3)",marginBottom:3,textTransform:"uppercase",letterSpacing:1}}>{l}</div>
+                      <div style={{fontSize:12,fontWeight:700,color:col}}>{v}</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="pgb"><div className="pgf" style={{width:`${pct}%`}}/></div>
+                <div style={{fontSize:10,color:"var(--t3)",marginTop:3}}>{pct.toFixed(0)}% quitado</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {tabRel==="inadimplencia"&&(
+        <>
+          <div className="rel-kpi">
+            <KPI l="Total inadimplentes" v={inad.length}     s="Clientes"                                                     color="red"/>
+            <KPI l="Valor em atraso"     v={R(tAtraso)}      s={`${par.filter(p=>p.status==="atrasada").length} parcelas`}    color="red"/>
+            <KPI l="% Inadimplência"     v={Pct(inadPct)}    s="Sobre a carteira"                                             color="orange"/>
+            <KPI l="Impacto"             v={tCapital>0?Pct((tAtraso/tCapital)*100):"—"} s="% do capital"                    color="red"/>
+          </div>
+          <div className="rel-section">
+            <div className="rel-section-head"><div className="rel-section-title">Parcelas em Atraso — Detalhado</div></div>
+            {par.filter(p=>p.status==="atrasada").sort((a,b)=>a.venc.localeCompare(b.venc)).map(p=>{
+              const e=emp.find(x=>x.id===p.empId); const c=cli.find(x=>x.id===e?.clienteId);
+              const dias=Math.floor((new Date()-new Date(p.venc+"T12:00:00"))/(1000*60*60*24));
+              return <RRow key={p.id} label={c?.nome?.split(" ").slice(0,2).join(" ")||"—"} sub={`Parcela ${p.num}ª · Venceu ${DT(p.venc)} · ${dias}d em atraso`} value={R(p.valor)} color="var(--rd)"/>;
+            })}
+            {par.filter(p=>p.status==="atrasada").length===0&&<div className="empty"><div className="et">Nenhuma parcela em atraso</div><div className="es">Carteira 100% em dia!</div></div>}
+          </div>
+          <div className="rel-section">
+            <div className="rel-section-head"><div className="rel-section-title">Clientes Inadimplentes</div></div>
+            {inad.map(e=>{
+              const c=cli.find(x=>x.id===e.clienteId);
+              const ps=par.filter(p=>p.empId===e.id&&p.status==="atrasada");
+              return <RRow key={e.id} label={c?.nome||"—"} sub={`${ps.length} parcela(s) em atraso · Emprést: ${R(e.valor)}`} value={R(ps.reduce((s,p)=>s+p.valor,0))} color="var(--rd)"/>;
+            })}
+            {inad.length===0&&<div className="empty"><div className="et">Nenhum cliente inadimplente</div></div>}
+          </div>
+        </>
+      )}
+
+      {tabRel==="carteira"&&(
+        <>
+          <div className="rel-kpi">
+            <KPI l="Operações ativas"    v={emp.filter(e=>e.status==="ativo").length}     s="Em andamento"      color="gold"/>
+            <KPI l="Quitadas"            v={emp.filter(e=>e.status==="quitado").length}   s="Concluídas"        color="green"/>
+            <KPI l="Capital recuperado"  v={Pct(tCapital>0?(tRecebido/tReceber)*100:0)}  s="Do total emitido"  color="green"/>
+            <KPI l="Rentab. real"        v={Pct(rentTotal)}                               s={`Lucro ${R(lucroTotal)}`} color="orange"/>
+          </div>
+          <div className="rel-section">
+            <div className="rel-section-head"><div className="rel-section-title">Todas as Operações</div></div>
+            {emp.map(e=>{
+              const c=cli.find(x=>x.id===e.clienteId);
+              const ps=par.filter(p=>p.empId===e.id);
+              const pg=ps.filter(p=>p.status==="paga").length;
+              const rec=ps.filter(p=>p.status==="paga").reduce((s,p)=>s+p.valor,0);
+              const luc=rec-e.valor*(pg/Math.max(e.nParcelas,1));
+              return (
+                <div key={e.id} style={{padding:"12px 18px",borderBottom:"1px solid rgba(255,255,255,.03)"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                    <div>
+                      <div style={{fontSize:13,fontWeight:500}}>{c?.nome?.split(" ").slice(0,2).join(" ")||"—"}</div>
+                      <div style={{fontSize:11,color:"var(--t3)"}}>{e.nParcelas}x · {DT(e.dtContrato)} · <span className={`bd ${e.status}`} style={{padding:"1px 6px",fontSize:9}}>{e.status}</span></div>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <div style={{fontFamily:"Cormorant Garamond",fontSize:15,fontWeight:700,color:"var(--g2)"}}>{R(e.valor)}</div>
+                      <div style={{fontSize:10,color:"var(--or)"}}>Lucro: {R(luc)}</div>
+                    </div>
+                  </div>
+                  <div className="pgb"><div className="pgf" style={{width:`${(pg/Math.max(e.nParcelas,1))*100}%`}}/></div>
+                  <div style={{fontSize:10,color:"var(--t3)",marginTop:2}}>{pg}/{e.nParcelas} parcelas · {R(rec)} recebido</div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ─── UTILITÁRIOS NOTAS ─────────────────────────────────────────────────── */
+const EXTENSO_UN  = ["","um","dois","três","quatro","cinco","seis","sete","oito","nove","dez","onze","doze","treze","quatorze","quinze","dezesseis","dezessete","dezoito","dezenove"];
+const EXTENSO_DEZ = ["","","vinte","trinta","quarenta","cinquenta","sessenta","setenta","oitenta","noventa"];
+const EXTENSO_CEM = ["","cem","duzentos","trezentos","quatrocentos","quinhentos","seiscentos","setecentos","oitocentos","novecentos"];
+const MESES_EXTENSO = ["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
+const PARCELAS_EXTENSO = ["","uma","duas","três","quatro","cinco","seis","sete","oito","nove","dez","onze","doze","treze","quatorze","quinze","dezesseis","dezessete","dezoito","dezenove","vinte","vinte e uma","vinte e duas","vinte e três","vinte e quatro","vinte e cinco","vinte e seis","vinte e sete","vinte e oito","vinte e nove","trinta","trinta e uma","trinta e duas","trinta e três","trinta e quatro","trinta e cinco","trinta e seis"];
+
+const numExtenso = (valor) => {
+  if(!valor || valor === 0) return "zero reais";
+  const inteiro = Math.floor(valor);
+  const cents   = Math.round((valor - inteiro) * 100);
+  const grupos  = [];
+  const milhar  = Math.floor(inteiro / 1000);
+  const resto   = inteiro % 1000;
+  const centena = Math.floor(resto / 100);
+  const dezena  = Math.floor((resto % 100) / 10);
+  const unidade = resto % 10;
+  let parteInt  = "";
+
+  if (milhar > 0) {
+    if (milhar === 1) grupos.push("mil");
+    else grupos.push(numCentena(milhar) + " mil");
+  }
+  if (centena > 0 && (dezena > 0 || unidade > 0)) grupos.push(EXTENSO_CEM[centena]);
+  else if (centena === 1 && dezena === 0 && unidade === 0) grupos.push("cem");
+  else if (centena > 1 && dezena === 0 && unidade === 0) grupos.push(EXTENSO_CEM[centena]);
+  else if (centena > 1) grupos.push(EXTENSO_CEM[centena]);
+
+  if (dezena === 1) grupos.push(EXTENSO_UN[10 + unidade]);
+  else {
+    if (dezena > 1) grupos.push(EXTENSO_DEZ[dezena]);
+    if (unidade > 0) grupos.push(EXTENSO_UN[unidade]);
+  }
+
+  parteInt = grupos.filter(Boolean).join(" e ");
+  const labelInt = inteiro === 1 ? "real" : "reais";
+  if (cents === 0) return `${parteInt} ${labelInt}`;
+
+  const labelCents = cents === 1 ? "centavo" : "centavos";
+  const c1 = Math.floor(cents / 10);
+  const c2 = cents % 10;
+  let parteCents = "";
+  if (c1 === 1) parteCents = EXTENSO_UN[10 + c2];
+  else { const p = []; if(c1>0) p.push(EXTENSO_DEZ[c1]); if(c2>0) p.push(EXTENSO_UN[c2]); parteCents = p.join(" e "); }
+  return `${parteInt} ${labelInt} e ${parteCents} ${labelCents}`;
+};
+
+const numCentena = (n) => {
+  const c = Math.floor(n/100), d = Math.floor((n%100)/10), u = n%10;
+  const p = [];
+  if(c > 0) p.push(n===100?"cem":EXTENSO_CEM[c]);
+  if(d === 1) p.push(EXTENSO_UN[10+u]);
+  else { if(d>1) p.push(EXTENSO_DEZ[d]); if(u>0) p.push(EXTENSO_UN[u]); }
+  return p.join(" e ");
+};
+
+const fmtDataExtenso = (dateStr) => {
+  if(!dateStr) return "";
+  const d = new Date(dateStr+"T12:00:00");
+  return `${d.getDate()} de ${MESES_EXTENSO[d.getMonth()]} de ${d.getFullYear()}`;
+};
+
+const fmtNotaNum = (num, ano) => String(num).padStart(5,"0") + "/" + ano;
+
+const gerarVencimentos = (dtVenc, nParcelas) => {
+  const datas = [];
+  for(let i=0; i<Math.min(3,nParcelas); i++){
+    const d = new Date(dtVenc+"T12:00:00");
+    d.setMonth(d.getMonth()+i);
+    datas.push(d.toLocaleDateString("pt-BR"));
+  }
+  return datas;
+};
+
+/* ─── MÓDULO NOTAS ───────────────────────────────────────────────────────── */
+function PgNotas({cli,emp,notas,setNotas,say}) {
+  const [anoAtivo, setAnoAtivo] = useState(new Date().getFullYear());
+  const [preview,  setPreview]  = useState(null);
+
+  // Calcular próximo número de nota
+  const proximoNum = notas.length > 0 ? Math.max(...notas.map(n=>n.num)) + 1 : 1;
+
+  // Gerar nota a partir de um empréstimo
+  const gerarNota = (e) => {
+    const cliente = cli.find(x=>x.id===e.clienteId);
+    if(!cliente) return say("Cliente não encontrado!");
+    const ano     = new Date(e.dtContrato+"T12:00:00").getFullYear();
+    const num     = proximoNum;
+    // Nome do arquivo
+    const notasDoCliente = notas.filter(n=>n.clienteId===e.clienteId);
+    const nomeArq = notasDoCliente.length === 0
+      ? cliente.nome
+      : `${cliente.nome} ${notasDoCliente.length + 1}`;
+    const vencimentos = gerarVencimentos(e.dtVencimento, e.nParcelas);
+    const nota = {
+      id:          Date.now(),
+      num,
+      ano,
+      numStr:      fmtNotaNum(num, ano),
+      empId:       e.id,
+      clienteId:   e.clienteId,
+      nomeArq,
+      cliente:     cliente.nome,
+      cpf:         cliente.cpf,
+      rua:         cliente.rua,
+      numero:      cliente.numero,
+      bairro:      cliente.bairro,
+      cep:         cliente.cep,
+      valor:       e.vTotal,
+      valorExt:    numExtenso(e.vTotal),
+      nParcelas:   e.nParcelas,
+      nParcelasExt:PARCELAS_EXTENSO[e.nParcelas] || String(e.nParcelas),
+      vParcela:    e.vParcela,
+      vParcelaExt: numExtenso(e.vParcela),
+      vencimentos,
+      dtContrato:  e.dtContrato,
+      dtExtenso:   fmtDataExtenso(e.dtContrato),
+      dtEmissao:   new Date().toISOString().split("T")[0],
+    };
+    setNotas(prev=>[...prev,nota].sort((a,b)=>a.num-b.num));
+    setPreview(nota);
+    say(`Nota ${nota.numStr} gerada para ${cliente.nome.split(" ")[0]}!`);
+  };
+
+  // Anos disponíveis
+  const anos = [...new Set(notas.map(n=>n.ano))].sort((a,b)=>b-a);
+  if(anos.length===0) anos.push(new Date().getFullYear());
+
+  // Notas do ano ativo
+  const notasAno = notas.filter(n=>n.ano===anoAtivo).sort((a,b)=>a.num-b.num);
+
+  // Empréstimos sem nota
+  const empSemNota = emp.filter(e=>e.status!=="quitado"&&!notas.find(n=>n.empId===e.id));
+
+  return (
+    <div className="pg">
+      <div className="phead">
+        <div><div className="pey">Documentos</div><div className="ptt">Notas Promissórias</div><div className="psb">{notas.length} nota(s) emitida(s)</div></div>
+      </div>
+
+      {/* Gerar nova nota */}
+      {empSemNota.length > 0 && (
+        <div className="tw" style={{marginBottom:16}}>
+          <div className="tht"><div className="tl">Gerar Nova Nota</div><div style={{fontSize:11,color:"var(--t3)"}}>Empréstimos sem nota</div></div>
+          <table className="dtable">
+            <thead><tr><th>Cliente</th><th>Valor</th><th>Total</th><th>Parcelas</th><th>Contrato</th><th></th></tr></thead>
+            <tbody>{empSemNota.map(e=>{
+              const cl=cli.find(x=>x.id===e.clienteId);
+              return (
+                <tr key={e.id}>
+                  <td style={{fontWeight:500}}>{cl?.nome?.split(" ").slice(0,3).join(" ")}</td>
+                  <td style={{color:"var(--g2)",fontWeight:600}}>{R(e.valor)}</td>
+                  <td style={{fontWeight:600}}>{R(e.vTotal)}</td>
+                  <td>{e.nParcelas}x de {R(e.vParcela)}</td>
+                  <td style={{color:"var(--t3)"}}>{DT(e.dtContrato)}</td>
+                  <td><button className="btn bg bsm" onClick={()=>gerarNota(e)}><Ic n="pdf" s={13}/> Gerar Nota</button></td>
+                </tr>
+              );
+            })}</tbody>
+          </table>
+          <div className="mlist">{empSemNota.map(e=>{
+            const cl=cli.find(x=>x.id===e.clienteId);
+            return (
+              <div key={e.id} className="mitem">
+                <div className="mitem-row">
+                  <div className="mav gold"><Ic n="pdf" s={16}/></div>
+                  <div className="mbody">
+                    <div className="mname">{cl?.nome?.split(" ").slice(0,3).join(" ")}</div>
+                    <div className="msub">{e.nParcelas}x · Total {R(e.vTotal)} · {DT(e.dtContrato)}</div>
+                  </div>
+                  <div className="mright">
+                    <button className="btn bg bsm" onClick={()=>gerarNota(e)}><Ic n="pdf" s={12}/> Gerar</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}</div>
+        </div>
+      )}
+
+      {/* Sub-abas por ano */}
+      <div className="tabs">
+        {anos.map(a=>(
+          <div key={a} className={`tab ${anoAtivo===a?"on":""}`} onClick={()=>setAnoAtivo(a)}>
+            {a} <span style={{fontSize:10,color:"var(--t3)",marginLeft:4}}>({notas.filter(n=>n.ano===a).length})</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Lista de notas do ano */}
+      {notasAno.length === 0 ? (
+        <div className="empty"><div style={{color:"var(--g)",opacity:.4,marginBottom:12}}><Ic n="pdf" s={44}/></div><div className="et">Nenhuma nota em {anoAtivo}</div><div className="es">Gere uma nota a partir de um empréstimo acima</div></div>
+      ) : (
+        <div className="tw">
+          <div className="tht"><div className="tl">Notas — {anoAtivo}</div><div style={{fontSize:11,color:"var(--t3)"}}>{notasAno.length} nota(s)</div></div>
+          <table className="dtable">
+            <thead><tr><th>Nº Nota</th><th>Cliente</th><th>Arquivo</th><th>Valor Total</th><th>Parcelas</th><th>Emissão</th><th>Ações</th></tr></thead>
+            <tbody>{notasAno.map(n=>(
+              <tr key={n.id}>
+                <td style={{fontFamily:"Cormorant Garamond",fontSize:15,fontWeight:700,color:"var(--g2)"}}>{n.numStr}</td>
+                <td style={{fontWeight:500}}>{n.cliente}</td>
+                <td style={{color:"var(--t3)",fontSize:12}}>{n.nomeArq}</td>
+                <td style={{fontWeight:600}}>{R(n.valor)}</td>
+                <td>{n.nParcelas}x de {R(n.vParcela)}</td>
+                <td style={{color:"var(--t3)"}}>{DT(n.dtEmissao)}</td>
+                <td>
+                  <div style={{display:"flex",gap:6}}>
+                    <button className="btn bo bsm" onClick={()=>setPreview(n)}><Ic n="eye" s={12}/> Ver</button>
+                  </div>
+                </td>
+              </tr>
+            ))}</tbody>
+          </table>
+          <div className="mlist">{notasAno.map(n=>(
+            <div key={n.id} className="mitem" onClick={()=>setPreview(n)}>
+              <div className="mitem-row">
+                <div className="mav gold" style={{fontSize:11,fontWeight:700,fontFamily:"Cinzel"}}>{n.num}</div>
+                <div className="mbody">
+                  <div className="mname">{n.cliente}</div>
+                  <div className="msub">{n.numStr} · {R(n.valor)} · {n.nParcelas}x</div>
+                </div>
+                <div className="mright">
+                  <div style={{color:"var(--g)",display:"flex",justifyContent:"flex-end"}}><Ic n="eye" s={14}/></div>
+                </div>
+              </div>
+            </div>
+          ))}</div>
+        </div>
+      )}
+
+      {/* MODAL PREVIEW DA NOTA */}
+      {preview && <ModalNota nota={preview} onClose={()=>setPreview(null)} say={say}/>}
+    </div>
+  );
+}
+
+/* ─── MODAL NOTA PROMISSÓRIA ─────────────────────────────────────────────── */
+function ModalNota({nota,onClose,say}) {
+
+  const shareWA = () => {
+    const txt = `*NOTA PROMISSÓRIA ${nota.numStr}*\n\nCliente: ${nota.cliente}\nValor: ${R(nota.valor)}\nParcelas: ${nota.nParcelas}x de ${R(nota.vParcela)}\n\n_Cred X — Controle Financeiro_`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(txt)}`,"_blank");
+    say("WhatsApp aberto!");
+  };
+
+  const shareEmail = () => {
+    const sub  = encodeURIComponent(`Nota Promissória ${nota.numStr} — ${nota.cliente}`);
+    const body = encodeURIComponent(`Nota Promissória Nº ${nota.numStr}\nCliente: ${nota.cliente}\nValor Total: ${R(nota.valor)}\nParcelas: ${nota.nParcelas}x de ${R(nota.vParcela)}\nEmissão: ${DT(nota.dtEmissao)}`);
+    window.open(`mailto:?subject=${sub}&body=${body}`,"_blank");
+    say("E-mail aberto!");
+  };
+
+  const imprimir = () => {
+    const conteudo = document.getElementById("nota-print-area").innerHTML;
+    const win = window.open("","_blank","width=1100,height=700");
+    win.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8"/>
+        <title>Nota Promissória ${nota.numStr} — ${nota.cliente}</title>
+        <style>
+          *{box-sizing:border-box;margin:0;padding:0}
+          body{font-family:serif;font-size:13px;line-height:1.8;color:#111;padding:40px 50px;background:#fff}
+          .np-titulo{text-align:center;font-size:20px;font-weight:700;letter-spacing:2px;text-transform:uppercase;border-bottom:2px solid #111;padding-bottom:8px;margin-bottom:14px}
+          .np-header{display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px}
+          .np-data{text-align:right;font-size:12px;margin-bottom:20px}
+          .np-corpo{text-align:justify;margin-bottom:14px;line-height:1.9}
+          .np-clausula{text-align:justify;margin-bottom:14px;font-size:12px;color:#333;line-height:1.8}
+          .np-foro{font-size:12px;color:#333;margin-bottom:32px}
+          .np-assinatura{display:flex;flex-direction:column;align-items:center;gap:6px;margin-top:40px;margin-bottom:32px}
+          .np-assinatura-linha{width:280px;border-top:1px solid #111;padding-top:6px;text-align:center;font-weight:700;font-size:13px}
+          .np-testemunhas-label{font-size:12px;margin-bottom:12px}
+          .np-testemunhas{display:flex;justify-content:space-between;gap:40px}
+          .np-testemunha-linha{flex:1;border-top:1px solid #111;padding-top:6px;text-align:center;font-size:11px}
+          @media print{
+            body{padding:16px 28px}
+            @page{size:A4 landscape;margin:1.5cm 2cm}
+          }
+        </style>
+      </head>
+      <body>${conteudo}</body>
+      </html>
+    `);
+    win.document.close();
+    setTimeout(()=>{ win.focus(); win.print(); }, 400);
+    say("Abrindo para impressão/PDF...");
+  };
+
+  return (
+    <div className="ov" onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="modal" style={{maxWidth:820,padding:"20px 18px"}}>
+        <div className="modal-handle"/>
+        <div className="mtt">Nota Promissória</div>
+        <div className="mst">{nota.nomeArq} · {nota.numStr}</div>
+
+        {/* NOTA FORMATADA — área de preview e impressão */}
+        <div id="nota-print-area" style={{
+          background:"#fff",color:"#111",borderRadius:10,padding:"22px 36px",
+          fontFamily:"Georgia, serif",fontSize:13,lineHeight:1.85,
+          border:"1px solid #ccc",maxHeight:"55vh",overflowY:"auto",
+          boxShadow:"0 2px 16px rgba(0,0,0,0.35)"
+        }}>
+          {/* TÍTULO */}
+          <div className="np-titulo" style={{textAlign:"center",fontSize:19,fontWeight:700,letterSpacing:2,textTransform:"uppercase",borderBottom:"2px solid #111",paddingBottom:8,marginBottom:14}}>
+            Nota Promissória
+          </div>
+
+          {/* NÚMERO E VALOR */}
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,marginBottom:4}}>
+            <span><b>Número da Nota:</b> {nota.numStr}</span>
+            <span><b>Valor:</b> R$ {nota.valor.toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+          </div>
+
+          {/* LOCAL E DATA */}
+          <div style={{textAlign:"right",fontSize:12.5,marginBottom:20}}>
+            <b>Local e Data:</b> Rio Branco – AC, {nota.dtExtenso}
+          </div>
+
+          {/* CORPO PRINCIPAL */}
+          <div style={{textAlign:"justify",marginBottom:16,lineHeight:1.9}}>
+            Pelo valor recebido eu, <b>{nota.cliente}</b>, inscrito sob CPF/MF Nº <b>{nota.cpf}</b>, residente e domiciliado na <b>{nota.rua}{nota.numero?`, ${nota.numero}`:""}{ nota.bairro?`, ${nota.bairro}`:""}{ nota.cep?`, CEP: ${nota.cep}`:""},  Rio Branco - Acre</b>, pagará ao Sr. <b>Vitor José Vasconcelos Beirouth</b>, portador do RG nº 363947 SSP/AC e CPF/MF 828.849.862-00, a quantia de <b>R$ {nota.valor.toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2})} ({(numExtenso(nota.valor).charAt(0).toUpperCase()+numExtenso(nota.valor).slice(1))})</b>.
+          </div>
+
+          {/* PARCELAS E VENCIMENTOS */}
+          <div style={{textAlign:"justify",marginBottom:16,lineHeight:1.9}}>
+            O pagamento será efetuado em <b>{nota.nParcelas} ({nota.nParcelasExt.charAt(0).toUpperCase()+nota.nParcelasExt.slice(1)})</b> parcelas mensais com vencimentos datados para os dias <b>{nota.vencimentos.join(", ")}</b>, e subsequentes no valor de <b>R$ {nota.vParcela.toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2})} ({numExtenso(nota.vParcela).charAt(0).toUpperCase()+numExtenso(nota.vParcela).slice(1)})</b> cada até a quitação das mesmas.
+          </div>
+
+          {/* CLÁUSULA DE MULTA */}
+          <div style={{textAlign:"justify",marginBottom:16,fontSize:12.5,lineHeight:1.8}}>
+            No caso de não pagamento de alguma parcela por mais de 05 (cinco) dias, essa nota será considerada atrasada e multa no valor de 1% (um por cento) dia será adicionada ao valor total da nota.
+          </div>
+
+          {/* FORO */}
+          <div style={{fontSize:12.5,marginBottom:36,lineHeight:1.8}}>
+            Fica eleito o foro da Comarca de Rio Branco – AC para dirimir quaisquer controvérsias oriundas do presente.
+          </div>
+
+          {/* ASSINATURA */}
+          <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,marginBottom:32}}>
+            <div style={{width:280,borderTop:"1px solid #111",paddingTop:8,textAlign:"center",fontWeight:700,fontSize:13}}>
+              {nota.cliente}
+            </div>
+          </div>
+
+          {/* TESTEMUNHAS */}
+          <div>
+            <div style={{fontSize:12.5,marginBottom:12}}>Testemunhas:</div>
+            <div style={{display:"flex",justifyContent:"space-between",gap:40}}>
+              <div style={{flex:1,borderTop:"1px solid #111",paddingTop:6,textAlign:"center",fontSize:11}}>&nbsp;</div>
+              <div style={{flex:1,borderTop:"1px solid #111",paddingTop:6,textAlign:"center",fontSize:11}}>&nbsp;</div>
+            </div>
+          </div>
+        </div>
+
+        {/* 3 BOTÕES */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginTop:14}}>
+          <button className="btn bwa bfw" onClick={shareWA} style={{fontSize:12}}><Ic n="wa"   s={13}/> WhatsApp</button>
+          <button className="btn bg  bfw" onClick={shareEmail} style={{fontSize:12}}><Ic n="mail" s={13}/> E-mail</button>
+          <button className="btn bfw" onClick={imprimir} style={{fontSize:12,background:"linear-gradient(135deg,#E8681A,#D4580E)",color:"#fff",fontWeight:600,border:"none",boxShadow:"0 2px 12px rgba(232,104,26,0.35)"}}><Ic n="dl" s={13}/> Imprimir</button>
+        </div>
+        <div className="mf"><button className="btn bgh" onClick={onClose}>Fechar</button></div>
+      </div>
+    </div>
+  );
+}
+
+
+/* ─── ORÇAMENTO ──────────────────────────────────────────────────────────── */
+function PgOrcamento({say}) {
+  const [valorDisp, onValorChange, v] = useMoney("");
+  const linhas=v>0?Array.from({length:22},(_,i)=>({n:i+3,parc:calcParcela(v,i+3)})):[];
+
+  const textoWA=()=>{
+    if(!v||!linhas.length) return "";
+    let txt=`*CRED X — Simulação de Empréstimo*\n\n`;
+    linhas.forEach(l=>{ txt+=`${l.n}x → ${R(l.parc)}\n`; });
+    return txt;
+  };
+
+  const shareWA=()=>{
+    if(!v) return;
+    const txt=encodeURIComponent(textoWA());
+    window.open(`https://wa.me/?text=${txt}`,"_blank");
+    say("WhatsApp aberto para compartilhamento!");
+  };
+
+  const shareEmail=()=>{
+    if(!v) return;
+    const sub=encodeURIComponent("Simulação de Empréstimo — Cred X");
+    const body=encodeURIComponent(textoWA());
+    window.open(`mailto:?subject=${sub}&body=${body}`,"_blank");
+    say("E-mail aberto para envio!");
+  };
+
+  return (
+    <div className="pg">
+      <div className="phead">
+        <div><div className="pey">Simulação</div><div className="ptt">Orçamento</div><div className="psb">Simule e compartilhe as condições</div></div>
+      </div>
+
+      <div className="card" style={{maxWidth:400,marginBottom:20}}>
+        <div className="ct">Informe o valor</div>
+        <div className="fld" style={{marginBottom:0}}>
+          <label>Valor do Empréstimo</label>
+          <input inputMode="numeric" value={valorDisp} onChange={onValorChange} placeholder="Ex: 3.000,00" style={{fontSize:18,fontWeight:600,textAlign:"center",letterSpacing:"1px"}}/>
+        </div>
+      </div>
+
+      {v>0&&(
+        <>
+          <div className="tw" style={{marginBottom:16}}>
+            <div className="tht">
+              <div className="tl">Opções de Parcelamento</div>
+              <div style={{fontSize:11,color:"var(--t3)"}}>3 a 24 parcelas</div>
+            </div>
+            <table className="dtable">
+              <thead><tr><th>Parcelas</th><th>Valor da Parcela</th></tr></thead>
+              <tbody>
+                {linhas.map(l=>(
+                  <tr key={l.n}>
+                    <td className="parcela-num">{l.n}x</td>
+                    <td className="parcela-val">{R(l.parc)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="mlist">
+              {linhas.map(l=>(
+                <div key={l.n} className="mitem">
+                  <div className="mitem-row">
+                    <div className="mav gold" style={{fontSize:13,fontWeight:700,width:44,height:44}}>{l.n}x</div>
+                    <div className="mbody"><div className="mname" style={{fontSize:15}}>{R(l.parc)}</div><div className="msub">por parcela</div></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <button className="btn bfw" style={{background:"linear-gradient(135deg,#25d366,#128c7e)",color:"#fff",fontWeight:600,boxShadow:"0 2px 12px rgba(37,211,102,.25)"}} onClick={shareWA}>
+              <Ic n="wa" s={16}/> Enviar WhatsApp
+            </button>
+            <button className="btn bg bfw" onClick={shareEmail}>
+              <Ic n="mail" s={16}/> Enviar E-mail
+            </button>
+          </div>
+        </>
+      )}
+
+      {!v&&(
+        <div className="empty">
+          <div style={{color:"var(--g)",marginBottom:12,opacity:.5}}><Ic n="calc" s={48}/></div>
+          <div className="et">Digite o valor acima</div>
+          <div className="es">A tabela de parcelamento aparecerá automaticamente</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+/* ─── LEMBRETES ─────────────────────────────────────────────────────────── */
+function PgLembretes({par,emp,cli,say}) {
+  const amanha=new Date(); amanha.setDate(amanha.getDate()+1);
+  const amanhaStr=amanha.toISOString().split("T")[0];
+  const proximos=par.filter(p=>p.status!=="paga"&&p.venc>=new Date().toISOString().split("T")[0]).sort((a,b)=>a.venc.localeCompare(b.venc)).slice(0,30);
+  const deAmanha=proximos.filter(p=>p.venc===amanhaStr);
+  const outros=proximos.filter(p=>p.venc!==amanhaStr);
+  const empNomeCli=eId=>{const e=emp.find(x=>x.id===eId);const cl=cli.find(x=>x.id===e?.clienteId);return{nome:cl?.nome||"—",tel:cl?.telefone||"",fn:cl?.nome?.split(" ")[0]||""};};
+  const enviarWA=(p)=>{
+    const{nome,tel,fn}=empNomeCli(p.empId);
+    const txt=encodeURIComponent(`Olá ${fn}! Lembrete: parcela Nº ${p.num} de *${R(p.valor)}* vence ${p.venc===amanhaStr?"amanhã":"em breve"} (${DT(p.venc)}). *Cred X*`);
+    window.open(`https://wa.me/55${tel.replace(/\D/g,"")}?text=${txt}`,"_blank");
+    say(`Lembrete enviado para ${fn}!`);
+  };
+  return (
+    <div className="pg">
+      <div className="phead"><div><div className="pey">Notificações</div><div className="ptt">Lembretes</div><div className="psb">Vencimentos próximos</div></div></div>
+      {deAmanha.length>0&&(
+        <>
+          <div style={{fontSize:9,color:"var(--rd)",letterSpacing:2,textTransform:"uppercase",fontWeight:600,marginBottom:8}}>⚠ Vencem Amanhã</div>
+          <div className="tw" style={{marginBottom:14}}>
+            <table className="dtable">
+              <thead><tr><th>Cliente</th><th>Parcela</th><th>Valor</th><th>Vencimento</th><th>Enviar</th></tr></thead>
+              <tbody>{deAmanha.map(p=>{const{nome}=empNomeCli(p.empId);return(
+                <tr key={p.id}>
+                  <td style={{fontWeight:500}}>{nome.split(" ").slice(0,2).join(" ")}</td>
+                  <td style={{color:"var(--t3)"}}>{p.num}ª</td>
+                  <td style={{fontWeight:600,color:"var(--g2)"}}>{R(p.valor)}</td>
+                  <td style={{color:"var(--rd)",fontWeight:600}}>{DT(p.venc)}</td>
+                  <td><button className="btn bsm" style={{background:"linear-gradient(135deg,#25d366,#128c7e)",color:"#fff",fontWeight:600,border:"none"}} onClick={()=>enviarWA(p)}><Ic n="wa" s={12}/> Enviar</button></td>
+                </tr>
+              );})}</tbody>
+            </table>
+            <div className="mlist">{deAmanha.map(p=>{const{nome,fn}=empNomeCli(p.empId);return(
+              <div key={p.id} className="mitem">
+                <div className="mrow">
+                  <div className="mav red"><Ic n="bell" s={15}/></div>
+                  <div className="mbody"><div className="mname">{nome.split(" ").slice(0,2).join(" ")}</div><div className="msub">Parcela {p.num} · vence amanhã</div></div>
+                  <div className="mright">
+                    <div className="mval" style={{color:"var(--g2)"}}>{R(p.valor)}</div>
+                    <button className="btn bsm" style={{marginTop:4,padding:"4px 9px",fontSize:10,background:"linear-gradient(135deg,#25d366,#128c7e)",color:"#fff",border:"none"}} onClick={()=>enviarWA(p)}><Ic n="wa" s={11}/> WA</button>
+                  </div>
+                </div>
+              </div>
+            );})}</div>
+          </div>
+        </>
+      )}
+      {deAmanha.length===0&&<div className="alert-banner"><Ic n="check" s={14} style={{color:"var(--gr)",flexShrink:0}}/><div className="alert-text" style={{color:"var(--gr)"}}>Nenhuma parcela vence amanhã</div></div>}
+      {outros.length>0&&(
+        <>
+          <div style={{fontSize:9,color:"var(--g)",letterSpacing:2,textTransform:"uppercase",fontWeight:600,marginBottom:8,marginTop:8}}>Próximos Vencimentos</div>
+          <div className="tw">
+            <table className="dtable">
+              <thead><tr><th>Cliente</th><th>Parcela</th><th>Valor</th><th>Vencimento</th><th>Lembrete</th></tr></thead>
+              <tbody>{outros.map(p=>{const{nome}=empNomeCli(p.empId);return(
+                <tr key={p.id}>
+                  <td style={{fontWeight:500}}>{nome.split(" ").slice(0,2).join(" ")}</td>
+                  <td style={{color:"var(--t3)"}}>{p.num}ª</td>
+                  <td style={{fontWeight:600}}>{R(p.valor)}</td>
+                  <td style={{color:"var(--t2)"}}>{DT(p.venc)}</td>
+                  <td><button className="btn bo bsm" onClick={()=>enviarWA(p)}><Ic n="wa" s={12}/> Enviar</button></td>
+                </tr>
+              );})}</tbody>
+            </table>
+            <div className="mlist">{outros.map(p=>{const{nome}=empNomeCli(p.empId);return(
+              <div key={p.id} className="mitem">
+                <div className="mrow">
+                  <div className="mav gold"><Ic n="bell" s={14}/></div>
+                  <div className="mbody"><div className="mname">{nome.split(" ").slice(0,2).join(" ")}</div><div className="msub">Parcela {p.num} · venc. {DT(p.venc)}</div></div>
+                  <div className="mright">
+                    <div className="mval" style={{color:"var(--g2)"}}>{R(p.valor)}</div>
+                    <button className="btn bo bsm" style={{marginTop:3,padding:"3px 8px",fontSize:10}} onClick={()=>enviarWA(p)}><Ic n="wa" s={11}/></button>
+                  </div>
+                </div>
+              </div>
+            );})}</div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ─── CONFIGURAÇÕES ──────────────────────────────────────────────────────── */
+function PgConfig({say,creds,setCreds,onLogout}) {
+  const [tab,setTab]=useState("login");
+  const [nick,setNick]=useState(creds?.nick||"admin");
+  const [pass,setPass]=useState("");
+  const [pass2,setPass2]=useState("");
+  const salvarLogin=()=>{
+    if(!nick){say("Nickname obrigatório!");return;}
+    if(pass&&pass!==pass2){say("Senhas não coincidem!");return;}
+    setCreds&&setCreds({nick,pass:pass||creds.pass});
+    say("Credenciais atualizadas!"); setPass(""); setPass2("");
+  };
+  const users=[{nome:"Administrador",email:"admin@credx.com",perfil:"admin",ativo:true,dt:"2022-01-01"},{nome:"Operador 1",email:"op1@credx.com",perfil:"operador",ativo:true,dt:"2023-03-15"}];
+  return (
+    <div className="pg">
+      <div className="phead"><div><div className="pey">Sistema</div><div className="ptt">Configurações</div><div className="psb">Usuários e perfis de acesso</div></div></div>
+      <div className="tabs">
+        {[["login","Login & Senha"],["usuarios","Usuários"],["perfis","Perfis"]].map(([v,l])=>(
+          <div key={v} className={`tab ${tab===v?"on":""}`} onClick={()=>setTab(v)}>{l}</div>
+        ))}
+      </div>
+      {tab==="login"&&(
+        <div style={{maxWidth:440}}>
+          <div className="card" style={{marginBottom:14}}>
+            <div className="ct">Credenciais de Acesso</div>
+            <div className="fld"><label>Nickname (login)</label><input value={nick} onChange={e=>setNick(e.target.value)} placeholder="Seu nickname" autoCapitalize="none"/></div>
+            <div className="fld"><label>Nova senha</label><input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="Deixe em branco para manter atual"/></div>
+            <div className="fld"><label>Confirmar senha</label><input type="password" value={pass2} onChange={e=>setPass2(e.target.value)} placeholder="Repita a nova senha"/></div>
+            <button className="btn bg" onClick={salvarLogin}><Ic n="check" s={14}/> Salvar credenciais</button>
+          </div>
+          <div className="card" style={{marginBottom:14}}>
+            <div className="ct">Biometria</div>
+            <div style={{display:"flex",alignItems:"center",gap:12,padding:"6px 0"}}>
+              <div style={{width:40,height:40,borderRadius:10,background:"var(--gd)",color:"var(--g)",display:"flex",alignItems:"center",justifyContent:"center"}}><Ic n="shield" s={20}/></div>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,fontWeight:500}}>Touch ID / Face ID</div>
+                <div style={{fontSize:11,color:"var(--t3)",marginTop:2}}>Será ativado após integração nativa</div>
+              </div>
+              <div style={{fontSize:10,color:"var(--g2)",background:"var(--gd2)",border:"1px solid var(--gb2)",padding:"3px 10px",borderRadius:8}}>Em breve</div>
+            </div>
+          </div>
+          <button className="btn brd bfw" onClick={onLogout||(() => {})}><Ic n="exit" s={14}/> Sair do sistema</button>
+        </div>
+      )}
+      {tab==="usuarios"&&(
+        <div className="tw">
+          <div className="tht"><div className="tl">Usuários</div><button className="btn bo bsm" onClick={()=>say("Em desenvolvimento!")}><Ic n="plus" s={13}/> Novo</button></div>
+          <table className="dtable">
+            <thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Cadastro</th><th>Status</th></tr></thead>
+            <tbody>{users.map((u,i)=>(
+              <tr key={i}>
+                <td style={{fontWeight:500}}>{u.nome}</td>
+                <td style={{color:"var(--t2)"}}>{u.email}</td>
+                <td><span className="bd pendente">{u.perfil}</span></td>
+                <td style={{color:"var(--t3)"}}>{DT(u.dt)}</td>
+                <td><span className="bd ativo">ativo</span></td>
+              </tr>
+            ))}</tbody>
+          </table>
+          <div className="mlist">{users.map((u,i)=>(
+            <div key={i} className="mitem">
+              <div className="mitem-row">
+                <div className="mav gold">{AV(u.nome)}</div>
+                <div className="mbody"><div className="mname">{u.nome}</div><div className="msub">{u.email}</div></div>
+                <div className="mright"><span className="bd pendente">{u.perfil}</span></div>
+              </div>
+            </div>
+          ))}</div>
+        </div>
+      )}
+      {tab==="perfis"&&(
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          {[
+            {nome:"Admin",desc:"Acesso total. Cria, edita e gerencia todos os registros e relatórios.",perms:["Dashboard completo","Clientes e empréstimos","Parcelas e caixa","Relatórios e orçamentos","Configurações"]},
+            {nome:"Operador",desc:"Acesso operacional. Registra pagamentos dos clientes atribuídos.",perms:["Dashboard resumido","Visualizar clientes","Registrar pagamentos","Visualizar parcelas"]},
+          ].map(p=>(
+            <div key={p.nome} className="card">
+              <div style={{display:"flex",alignItems:"center",gap:9,marginBottom:10}}>
+                <div style={{width:32,height:32,borderRadius:8,background:"var(--gd)",color:"var(--g)",display:"flex",alignItems:"center",justifyContent:"center"}}><Ic n="user" s={15}/></div>
+                <div>
+                  <div style={{fontFamily:"Cormorant Garamond",fontSize:17,fontWeight:600,color:"var(--g2)"}}>{p.nome}</div>
+                  <div style={{fontSize:10,color:"var(--t3)"}}>Perfil de acesso</div>
+                </div>
+              </div>
+              <div style={{fontSize:12,color:"var(--t2)",marginBottom:10,lineHeight:1.5}}>{p.desc}</div>
+              <div className="gdl"/>
+              {p.perms.map(pm=>(
+                <div key={pm} style={{display:"flex",alignItems:"center",gap:6,padding:"4px 0",fontSize:12,color:"var(--t2)"}}>
+                  <div style={{color:"var(--gr)",flexShrink:0}}><Ic n="check" s={11}/></div>{pm}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
